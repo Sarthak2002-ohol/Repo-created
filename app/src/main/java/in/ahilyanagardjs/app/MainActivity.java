@@ -37,6 +37,8 @@ import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
+
 public class MainActivity extends Activity {
     private static final String HOME_URL = "https://ahilyanagardjs.in/";
     private static final String DOWNLOADS_URL = "https://ahilyanagardjs.in/newitems/1.html";
@@ -53,13 +55,14 @@ public class MainActivity extends Activity {
     private final Handler handler = new Handler(Looper.getMainLooper());
 
     private WebView webView;
+    private SwipeRefreshLayout swipeRefreshLayout;
     private ProgressBar progressBar;
     private ImageView splashView;
     private LinearLayout offlineView;
     private LinearLayout bottomNavigation;
-    private LinearLayout[] navItems = new LinearLayout[5];
-    private TextView[] navIcons = new TextView[5];
-    private TextView[] navLabels = new TextView[5];
+    private final LinearLayout[] navItems = new LinearLayout[5];
+    private final TextView[] navIcons = new TextView[5];
+    private final TextView[] navLabels = new TextView[5];
 
     private long splashStartedAt;
     private boolean initialPageFinished = false;
@@ -71,6 +74,8 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
+        getWindow().setStatusBarColor(Color.BLACK);
+        getWindow().setNavigationBarColor(Color.BLACK);
         splashStartedAt = SystemClock.elapsedRealtime();
 
         FrameLayout root = new FrameLayout(this);
@@ -79,6 +84,7 @@ public class MainActivity extends Activity {
         LinearLayout appShell = new LinearLayout(this);
         appShell.setOrientation(LinearLayout.VERTICAL);
         appShell.setBackgroundColor(Color.BLACK);
+        applySystemBarInsets(appShell);
 
         FrameLayout contentContainer = new FrameLayout(this);
         LinearLayout.LayoutParams contentParams = new LinearLayout.LayoutParams(
@@ -88,11 +94,20 @@ public class MainActivity extends Activity {
         );
         appShell.addView(contentContainer, contentParams);
 
-        webView = new WebView(this);
-        webView.setBackgroundColor(Color.BLACK);
-        contentContainer.addView(webView, new FrameLayout.LayoutParams(
+        swipeRefreshLayout = new SwipeRefreshLayout(this);
+        swipeRefreshLayout.setColorSchemeColors(0xFFF4A623);
+        swipeRefreshLayout.setProgressBackgroundColorSchemeColor(0xFF111111);
+        swipeRefreshLayout.setOnRefreshListener(this::refreshFromSwipe);
+        contentContainer.addView(swipeRefreshLayout, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
+        ));
+
+        webView = new WebView(this);
+        webView.setBackgroundColor(Color.BLACK);
+        swipeRefreshLayout.addView(webView, new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
         ));
 
         progressBar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
@@ -147,6 +162,17 @@ public class MainActivity extends Activity {
         }
     }
 
+    @SuppressWarnings("deprecation")
+    private void applySystemBarInsets(View view) {
+        view.setOnApplyWindowInsetsListener((v, insets) -> {
+            int topInset = insets.getSystemWindowInsetTop();
+            int bottomInset = insets.getSystemWindowInsetBottom();
+            v.setPadding(0, topInset, 0, bottomInset);
+            return insets;
+        });
+        view.requestApplyInsets();
+    }
+
     private void configureWebView() {
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
@@ -169,7 +195,7 @@ public class MainActivity extends Activity {
             @Override
             public void onProgressChanged(WebView view, int newProgress) {
                 progressBar.setProgress(newProgress);
-                if (splashDismissed) {
+                if (splashDismissed && !swipeRefreshLayout.isRefreshing()) {
                     progressBar.setVisibility(newProgress >= 100 ? View.GONE : View.VISIBLE);
                 }
             }
@@ -180,13 +206,15 @@ public class MainActivity extends Activity {
             public void onPageStarted(WebView view, String url, Bitmap favicon) {
                 mainFrameError = false;
                 offlineView.setVisibility(View.GONE);
-                if (splashDismissed) {
+                if (splashDismissed && !swipeRefreshLayout.isRefreshing()) {
                     progressBar.setVisibility(View.VISIBLE);
                 }
             }
 
             @Override
             public void onPageFinished(WebView view, String url) {
+                swipeRefreshLayout.setRefreshing(false);
+                progressBar.setVisibility(View.GONE);
                 if (!initialPageFinished && !mainFrameError) {
                     initialPageFinished = true;
                     hideSplashWhenReady();
@@ -196,6 +224,7 @@ public class MainActivity extends Activity {
             @Override
             public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
                 if (request.isForMainFrame()) {
+                    swipeRefreshLayout.setRefreshing(false);
                     mainFrameError = true;
                     showOfflineWhenReady();
                 }
@@ -204,6 +233,7 @@ public class MainActivity extends Activity {
             @SuppressWarnings("deprecation")
             @Override
             public void onReceivedError(WebView view, int errorCode, String description, String failingUrl) {
+                swipeRefreshLayout.setRefreshing(false);
                 mainFrameError = true;
                 showOfflineWhenReady();
             }
@@ -447,6 +477,7 @@ public class MainActivity extends Activity {
     private void loadUrlInternal(String url, int navIndex) {
         if (!isNetworkAvailable()) {
             mainFrameError = true;
+            swipeRefreshLayout.setRefreshing(false);
             showOfflineWhenReady();
             return;
         }
@@ -457,14 +488,35 @@ public class MainActivity extends Activity {
         webView.loadUrl(url);
     }
 
-    private void refreshCurrentPage() {
+    private void refreshFromSwipe() {
         if (!isNetworkAvailable()) {
+            swipeRefreshLayout.setRefreshing(false);
             Toast.makeText(this, R.string.offline_message, Toast.LENGTH_SHORT).show();
             offlineView.setVisibility(View.VISIBLE);
             return;
         }
 
         offlineView.setVisibility(View.GONE);
+        mainFrameError = false;
+        String currentUrl = webView.getUrl();
+        if (currentUrl == null || currentUrl.trim().isEmpty()) {
+            webView.loadUrl(HOME_URL);
+        } else {
+            webView.reload();
+        }
+    }
+
+    private void refreshCurrentPage() {
+        if (!isNetworkAvailable()) {
+            swipeRefreshLayout.setRefreshing(false);
+            Toast.makeText(this, R.string.offline_message, Toast.LENGTH_SHORT).show();
+            offlineView.setVisibility(View.VISIBLE);
+            return;
+        }
+
+        offlineView.setVisibility(View.GONE);
+        mainFrameError = false;
+        swipeRefreshLayout.setRefreshing(true);
         String currentUrl = webView.getUrl();
         if (currentUrl == null || currentUrl.trim().isEmpty()) {
             webView.loadUrl(HOME_URL);
@@ -475,12 +527,14 @@ public class MainActivity extends Activity {
 
     private void retryCurrentPage() {
         if (!isNetworkAvailable()) {
+            swipeRefreshLayout.setRefreshing(false);
             Toast.makeText(this, R.string.offline_message, Toast.LENGTH_SHORT).show();
             return;
         }
 
         offlineView.setVisibility(View.GONE);
         mainFrameError = false;
+        swipeRefreshLayout.setRefreshing(true);
 
         String currentUrl = webView.getUrl();
         if (currentUrl == null || currentUrl.trim().isEmpty()) {
@@ -520,6 +574,7 @@ public class MainActivity extends Activity {
         handler.postDelayed(() -> {
             splashDismissed = true;
             splashView.setVisibility(View.GONE);
+            swipeRefreshLayout.setRefreshing(false);
             progressBar.setVisibility(View.GONE);
             offlineView.setVisibility(View.VISIBLE);
             bottomNavigation.setVisibility(View.VISIBLE);
