@@ -30,6 +30,8 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.webkit.URLUtil;
+import android.webkit.MimeTypeMap;
+import android.provider.DocumentsContract;
 import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
@@ -42,6 +44,10 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.net.URLDecoder;
+import java.util.Locale;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
 
@@ -55,6 +61,7 @@ public class MainActivity extends Activity {
     private static final String INTERNAL_HOST = "ahilyanagardjs.in";
     private static final long MIN_SPLASH_MS = 2000L;
     private static final int REQUEST_SAVE_FILE = 9001;
+    private static final Pattern CONTENT_DISPOSITION_FILENAME = Pattern.compile("(?i)filename\\*?\\s*=\\s*(?:UTF-8\'\'|\"?)([^\";]+)");
 
     private static final int NAV_HOME = 0;
     private static final int NAV_DOWNLOADS = 1;
@@ -112,6 +119,8 @@ public class MainActivity extends Activity {
         swipeRefreshLayout.setColorSchemeColors(0xFFF4A623);
         swipeRefreshLayout.setProgressBackgroundColorSchemeColor(0xFF111111);
         swipeRefreshLayout.setOnRefreshListener(this::refreshFromSwipe);
+        swipeRefreshLayout.setDistanceToTriggerSync(dpToPx(120));
+        swipeRefreshLayout.setOnChildScrollUpCallback((parent, child) -> webView != null && webView.canScrollVertically(-1));
         contentContainer.addView(swipeRefreshLayout, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
@@ -200,6 +209,7 @@ public class MainActivity extends Activity {
         settings.setDisplayZoomControls(false);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);
         settings.setMediaPlaybackRequiresUserGesture(false);
+        settings.setSupportMultipleWindows(false);
 
         CookieManager cookies = CookieManager.getInstance();
         cookies.setAcceptCookie(true);
@@ -229,6 +239,7 @@ public class MainActivity extends Activity {
             public void onPageFinished(WebView view, String url) {
                 swipeRefreshLayout.setRefreshing(false);
                 progressBar.setVisibility(View.GONE);
+                normalizeWebsiteLinks(view);
                 if (!initialPageFinished && !mainFrameError) {
                     initialPageFinished = true;
                     hideSplashWhenReady();
@@ -280,15 +291,15 @@ public class MainActivity extends Activity {
         }
 
         Uri sourceUri = Uri.parse(url);
-        String scheme = sourceUri.getScheme() == null ? "" : sourceUri.getScheme().toLowerCase();
+        String scheme = sourceUri.getScheme() == null ? "" : sourceUri.getScheme().toLowerCase(Locale.US);
         if (!"http".equals(scheme) && !"https".equals(scheme)) {
             openExternal(sourceUri);
             return;
         }
 
-        String safeMimeType = (mimetype == null || mimetype.trim().isEmpty())
-                ? "application/octet-stream" : mimetype;
-        String fileName = URLUtil.guessFileName(url, contentDisposition, safeMimeType);
+        String fileName = resolveDownloadFileName(url, contentDisposition, mimetype);
+        String safeMimeType = resolveDownloadMimeType(mimetype, fileName, url);
+        fileName = ensureMatchingExtension(fileName, safeMimeType);
 
         pendingDownloadUrl = url;
         pendingDownloadUserAgent = userAgent;
@@ -308,6 +319,188 @@ public class MainActivity extends Activity {
         } catch (ActivityNotFoundException e) {
             clearPendingDownload();
             openExternal(sourceUri);
+        }
+    }
+
+    private String resolveDownloadFileName(String url, String contentDisposition, String mimetype) {
+        String fromDisposition = extractFileNameFromContentDisposition(contentDisposition);
+        if (hasUsefulExtension(fromDisposition)) {
+            return sanitizeFileName(fromDisposition);
+        }
+
+        String urlName = null;
+        try {
+            String last = Uri.parse(url).getLastPathSegment();
+            if (last != null) {
+                urlName = URLDecoder.decode(last, "UTF-8");
+            }
+        } catch (Exception ignored) {
+        }
+        if (hasUsefulExtension(urlName)) {
+            return sanitizeFileName(urlName);
+        }
+
+        String title = webView.getTitle();
+        String cleanTitle = cleanPageTitle(title);
+        String inferredExtension = inferExtension(mimetype, fromDisposition, url, title);
+
+        if (cleanTitle == null || cleanTitle.trim().isEmpty()) {
+            cleanTitle = "AhilyanagarDJs_Music";
+        }
+
+        if (inferredExtension == null || inferredExtension.isEmpty()) {
+            inferredExtension = "mp3";
+        }
+
+        return sanitizeFileName(cleanTitle) + "." + inferredExtension;
+    }
+
+    private String extractFileNameFromContentDisposition(String contentDisposition) {
+        if (contentDisposition == null || contentDisposition.trim().isEmpty()) {
+            return null;
+        }
+        try {
+            Matcher matcher = CONTENT_DISPOSITION_FILENAME.matcher(contentDisposition);
+            if (matcher.find()) {
+                String value = matcher.group(1);
+                if (value != null) {
+                    value = value.trim();
+                    if (value.endsWith("\"")) {
+                        value = value.substring(0, value.length() - 1);
+                    }
+                    return URLDecoder.decode(value, "UTF-8");
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        return null;
+    }
+
+    private String cleanPageTitle(String title) {
+        if (title == null) {
+            return null;
+        }
+        String cleaned = title
+                .replaceAll("(?i)\\s*Mp3\\s+Song\\s+Download.*$", "")
+                .replaceAll("(?i)\\s*[-|]\\s*AhilyanagarDjs.*$", "")
+                .replaceAll("(?i)\\s*[-|]\\s*AhilyanagarDJ\\'s.*$", "")
+                .trim();
+        return cleaned;
+    }
+
+    private boolean hasUsefulExtension(String fileName) {
+        if (fileName == null) {
+            return false;
+        }
+        String lower = fileName.toLowerCase(Locale.US);
+        if (lower.endsWith(".bin") || lower.endsWith(".html") || lower.endsWith(".htm") || lower.endsWith(".php")) {
+            return false;
+        }
+        int dot = lower.lastIndexOf('.');
+        return dot > 0 && dot < lower.length() - 1 && lower.length() - dot <= 8;
+    }
+
+    private String inferExtension(String mimetype, String dispositionName, String url, String title) {
+        String ext = extensionFromName(dispositionName);
+        if (ext != null) return ext;
+
+        try {
+            String urlExt = MimeTypeMap.getFileExtensionFromUrl(url);
+            if (urlExt != null && !urlExt.isEmpty() && !"html".equalsIgnoreCase(urlExt) && !"php".equalsIgnoreCase(urlExt)) {
+                return urlExt.toLowerCase(Locale.US);
+            }
+        } catch (Exception ignored) {
+        }
+
+        if (mimetype != null && !mimetype.trim().isEmpty() && !"application/octet-stream".equalsIgnoreCase(mimetype)) {
+            String mimeExt = MimeTypeMap.getSingleton().getExtensionFromMimeType(mimetype.split(";")[0].trim());
+            if (mimeExt != null && !mimeExt.isEmpty()) return mimeExt;
+        }
+
+        String lowerTitle = title == null ? "" : title.toLowerCase(Locale.US);
+        if (lowerTitle.contains("mp3")) return "mp3";
+        if (lowerTitle.contains("wav")) return "wav";
+        if (lowerTitle.contains("m4a")) return "m4a";
+        if (lowerTitle.contains("zip") || lowerTitle.contains("megapack") || lowerTitle.contains("powerpack")) return "zip";
+        return null;
+    }
+
+    private String extensionFromName(String fileName) {
+        if (!hasUsefulExtension(fileName)) return null;
+        int dot = fileName.lastIndexOf('.');
+        if (dot < 0 || dot >= fileName.length() - 1) return null;
+        return fileName.substring(dot + 1).toLowerCase(Locale.US);
+    }
+
+    private String resolveDownloadMimeType(String mimetype, String fileName, String url) {
+        if (mimetype != null) {
+            String cleaned = mimetype.split(";")[0].trim().toLowerCase(Locale.US);
+            if (!cleaned.isEmpty() && !"application/octet-stream".equals(cleaned) && !"binary/octet-stream".equals(cleaned)) {
+                return cleaned;
+            }
+        }
+
+        String ext = extensionFromName(fileName);
+        if (ext == null) {
+            ext = inferExtension(mimetype, null, url, webView.getTitle());
+        }
+        if (ext != null) {
+            if ("mp3".equals(ext)) return "audio/mpeg";
+            if ("wav".equals(ext)) return "audio/wav";
+            if ("m4a".equals(ext)) return "audio/mp4";
+            if ("zip".equals(ext)) return "application/zip";
+            if ("rar".equals(ext)) return "application/vnd.rar";
+            String mapped = MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext);
+            if (mapped != null) return mapped;
+        }
+        return "application/octet-stream";
+    }
+
+    private String ensureMatchingExtension(String fileName, String mimeType) {
+        if (fileName == null || fileName.trim().isEmpty()) {
+            fileName = "AhilyanagarDJs_Music";
+        }
+        String lower = fileName.toLowerCase(Locale.US);
+        if (lower.endsWith(".bin")) {
+            fileName = fileName.substring(0, fileName.length() - 4);
+        }
+        if (hasUsefulExtension(fileName)) {
+            return sanitizeFileName(fileName);
+        }
+
+        String ext = null;
+        if ("audio/mpeg".equalsIgnoreCase(mimeType)) ext = "mp3";
+        else if ("audio/wav".equalsIgnoreCase(mimeType)) ext = "wav";
+        else if ("audio/mp4".equalsIgnoreCase(mimeType)) ext = "m4a";
+        else if ("application/zip".equalsIgnoreCase(mimeType)) ext = "zip";
+        else if ("application/vnd.rar".equalsIgnoreCase(mimeType)) ext = "rar";
+        if (ext == null) ext = "mp3";
+        return sanitizeFileName(fileName) + "." + ext;
+    }
+
+    private String sanitizeFileName(String fileName) {
+        if (fileName == null) return "AhilyanagarDJs_Music.mp3";
+        String clean = fileName.replaceAll("[\\/:*?\"<>|\\p{Cntrl}]", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+        if (clean.length() > 140) {
+            int dot = clean.lastIndexOf('.');
+            String ext = dot > 0 ? clean.substring(dot) : "";
+            int maxBase = Math.max(1, 140 - ext.length());
+            clean = clean.substring(0, Math.min(maxBase, clean.length())).trim() + ext;
+        }
+        return clean.isEmpty() ? "AhilyanagarDJs_Music.mp3" : clean;
+    }
+
+    private void normalizeWebsiteLinks(WebView view) {
+        String script = "(function(){" +
+                "function f(){document.querySelectorAll('a[target=\"_blank\"]').forEach(function(a){a.setAttribute('target','_self');});}" +
+                "f();" +
+                "if(!window.__adjTargetFix){window.__adjTargetFix=true;new MutationObserver(f).observe(document.documentElement,{childList:true,subtree:true,attributes:true,attributeFilter:['target']});}" +
+                "})();";
+        try {
+            view.evaluateJavascript(script, null);
+        } catch (Exception ignored) {
         }
     }
 
@@ -357,14 +550,30 @@ public class MainActivity extends Activity {
                     connection.setRequestProperty("Referer", referer);
                 }
 
+                connection.setRequestProperty("Accept", "*/*");
+                connection.setRequestProperty("Accept-Encoding", "identity");
                 connection.connect();
                 int responseCode = connection.getResponseCode();
                 if (responseCode < 200 || responseCode >= 400) {
                     throw new Exception("HTTP " + responseCode);
                 }
 
+                Uri outputUri = destinationUri;
+                try {
+                    String responseDisposition = connection.getHeaderField("Content-Disposition");
+                    String responseMime = connection.getContentType();
+                    String actualName = resolveDownloadFileName(connection.getURL().toString(), responseDisposition, responseMime);
+                    String actualMime = resolveDownloadMimeType(responseMime, actualName, connection.getURL().toString());
+                    actualName = ensureMatchingExtension(actualName, actualMime);
+                    if (actualName != null && pendingDownloadFileName != null && !actualName.equals(pendingDownloadFileName)) {
+                        Uri renamed = DocumentsContract.renameDocument(getContentResolver(), destinationUri, actualName);
+                        if (renamed != null) outputUri = renamed;
+                    }
+                } catch (Exception ignored) {
+                }
+
                 try (InputStream input = connection.getInputStream();
-                     OutputStream output = getContentResolver().openOutputStream(destinationUri, "w")) {
+                     OutputStream output = getContentResolver().openOutputStream(outputUri, "w")) {
                     if (output == null) {
                         throw new Exception("Unable to open destination file");
                     }
