@@ -41,8 +41,6 @@ import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
-
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
@@ -77,7 +75,6 @@ public class MainActivity extends Activity {
     private final Handler handler = new Handler(Looper.getMainLooper());
 
     private WebView webView;
-    private SwipeRefreshLayout swipeRefreshLayout;
     private ProgressBar progressBar;
     private ImageView splashView;
     private LinearLayout offlineView;
@@ -123,19 +120,6 @@ public class MainActivity extends Activity {
         appShell.addView(contentContainer, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
-        swipeRefreshLayout = new SwipeRefreshLayout(this);
-        swipeRefreshLayout.setColorSchemeColors(0xFFF4A623);
-        swipeRefreshLayout.setProgressBackgroundColorSchemeColor(0xFF111111);
-        swipeRefreshLayout.setDistanceToTriggerSync(dpToPx(140));
-        swipeRefreshLayout.setOnRefreshListener(this::refreshFromSwipe);
-        swipeRefreshLayout.setOnChildScrollUpCallback(
-                (parent, child) -> webView != null && webView.canScrollVertically(-1)
-        );
-
-        contentContainer.addView(swipeRefreshLayout, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT));
-
         webView = new WebView(this);
         webView.setBackgroundColor(Color.BLACK);
         webView.setClickable(true);
@@ -145,7 +129,7 @@ public class MainActivity extends Activity {
 
         installWebViewTouchRouting();
 
-        swipeRefreshLayout.addView(webView, new ViewGroup.LayoutParams(
+        contentContainer.addView(webView, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));
 
@@ -220,36 +204,28 @@ public class MainActivity extends Activity {
                 case MotionEvent.ACTION_DOWN:
                     webTouchDownX = event.getX();
                     webTouchDownY = event.getY();
-
-                    // Normal taps belong to the website, not SwipeRefreshLayout.
-                    v.getParent().requestDisallowInterceptTouchEvent(true);
                     break;
 
-                case MotionEvent.ACTION_MOVE:
+                case MotionEvent.ACTION_UP:
                     float dx = event.getX() - webTouchDownX;
                     float dy = event.getY() - webTouchDownY;
 
                     boolean atPageTop = !webView.canScrollVertically(-1);
-                    boolean verticalDownGesture =
-                            dy > (webTouchSlop * 2f) &&
-                            Math.abs(dy) > Math.abs(dx);
+                    boolean deliberatePull =
+                            atPageTop &&
+                            dy > dpToPx(110) &&
+                            Math.abs(dy) > Math.abs(dx) * 1.2f;
 
-                    // Only hand the gesture to SwipeRefreshLayout when the user
-                    // deliberately pulls down from the absolute top of the page.
-                    boolean allowRefreshIntercept =
-                            atPageTop && verticalDownGesture;
-
-                    v.getParent().requestDisallowInterceptTouchEvent(
-                            !allowRefreshIntercept);
+                    if (deliberatePull) {
+                        refreshFromPullGesture();
+                    }
                     break;
 
-                case MotionEvent.ACTION_UP:
                 case MotionEvent.ACTION_CANCEL:
-                    v.getParent().requestDisallowInterceptTouchEvent(false);
                     break;
             }
 
-            // Never consume the event here. The WebView must receive the tap.
+            // Never consume taps or gestures. WebView always receives them.
             return false;
         });
     }
@@ -282,7 +258,7 @@ public class MainActivity extends Activity {
             public void onProgressChanged(WebView view, int newProgress) {
                 progressBar.setProgress(newProgress);
 
-                if (splashDismissed && !swipeRefreshLayout.isRefreshing()) {
+                if (splashDismissed) {
                     progressBar.setVisibility(
                             newProgress >= 100 ? View.GONE : View.VISIBLE);
                 }
@@ -304,14 +280,13 @@ public class MainActivity extends Activity {
                 view.setFocusableInTouchMode(true);
                 view.requestFocus(View.FOCUS_DOWN);
 
-                if (splashDismissed && !swipeRefreshLayout.isRefreshing()) {
+                if (splashDismissed) {
                     progressBar.setVisibility(View.VISIBLE);
                 }
             }
 
             @Override
             public void onPageFinished(WebView view, String url) {
-                swipeRefreshLayout.setRefreshing(false);
                 progressBar.setVisibility(View.GONE);
 
                 view.setEnabled(true);
@@ -319,7 +294,6 @@ public class MainActivity extends Activity {
                 view.requestFocus(View.FOCUS_DOWN);
 
                 // One-time rewrite only. No MutationObserver is left running.
-                normalizeStaticTargetBlankLinks(view);
 
                 if (!initialPageFinished && !mainFrameError) {
                     initialPageFinished = true;
@@ -334,8 +308,7 @@ public class MainActivity extends Activity {
                     WebResourceError error) {
 
                 if (request.isForMainFrame()) {
-                    swipeRefreshLayout.setRefreshing(false);
-                    mainFrameError = true;
+                        mainFrameError = true;
                     showOfflineWhenReady();
                 }
             }
@@ -348,7 +321,6 @@ public class MainActivity extends Activity {
                     String description,
                     String failingUrl) {
 
-                swipeRefreshLayout.setRefreshing(false);
                 mainFrameError = true;
                 showOfflineWhenReady();
             }
@@ -383,19 +355,6 @@ public class MainActivity extends Activity {
                         mimetype);
             }
         });
-    }
-
-    private void normalizeStaticTargetBlankLinks(WebView view) {
-        String script =
-                "(function(){" +
-                "var a=document.querySelectorAll('a[target=\"_blank\"]');" +
-                "for(var i=0;i<a.length;i++){a[i].target='_self';}" +
-                "})();";
-
-        try {
-            view.evaluateJavascript(script, null);
-        } catch (Exception ignored) {
-        }
     }
 
     private void promptSaveDownload(
@@ -1547,7 +1506,6 @@ public class MainActivity extends Activity {
 
         if (!isNetworkAvailable()) {
             mainFrameError = true;
-            swipeRefreshLayout.setRefreshing(false);
             showOfflineWhenReady();
             return;
         }
@@ -1564,9 +1522,8 @@ public class MainActivity extends Activity {
         webView.loadUrl(url);
     }
 
-    private void refreshFromSwipe() {
+    private void refreshFromPullGesture() {
         if (!isNetworkAvailable()) {
-            swipeRefreshLayout.setRefreshing(false);
 
             Toast.makeText(
                     this,
@@ -1579,6 +1536,7 @@ public class MainActivity extends Activity {
 
         offlineView.setVisibility(View.GONE);
         mainFrameError = false;
+        progressBar.setVisibility(View.VISIBLE);
 
         String currentUrl = webView.getUrl();
 
@@ -1592,7 +1550,6 @@ public class MainActivity extends Activity {
 
     private void refreshCurrentPage() {
         if (!isNetworkAvailable()) {
-            swipeRefreshLayout.setRefreshing(false);
 
             Toast.makeText(
                     this,
@@ -1606,8 +1563,6 @@ public class MainActivity extends Activity {
         offlineView.setVisibility(View.GONE);
         mainFrameError = false;
 
-        swipeRefreshLayout.setRefreshing(true);
-
         String currentUrl = webView.getUrl();
 
         if (currentUrl == null ||
@@ -1620,7 +1575,6 @@ public class MainActivity extends Activity {
 
     private void retryCurrentPage() {
         if (!isNetworkAvailable()) {
-            swipeRefreshLayout.setRefreshing(false);
 
             Toast.makeText(
                     this,
@@ -1632,8 +1586,6 @@ public class MainActivity extends Activity {
 
         offlineView.setVisibility(View.GONE);
         mainFrameError = false;
-
-        swipeRefreshLayout.setRefreshing(true);
 
         String currentUrl = webView.getUrl();
 
@@ -1698,7 +1650,6 @@ public class MainActivity extends Activity {
             splashDismissed = true;
 
             splashView.setVisibility(View.GONE);
-            swipeRefreshLayout.setRefreshing(false);
             progressBar.setVisibility(View.GONE);
             offlineView.setVisibility(View.VISIBLE);
             bottomNavigation.setVisibility(View.VISIBLE);

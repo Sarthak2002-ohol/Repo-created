@@ -10,8 +10,8 @@ android {
         applicationId = "in.ahilyanagardjs.app"
         minSdk = 23
         targetSdk = 35
-        versionCode = 7
-        versionName = "1.5"
+        versionCode = 8
+        versionName = "1.6"
     }
 
     buildTypes {
@@ -22,5 +22,4 @@ android {
 }
 
 dependencies {
-    implementation("androidx.swiperefreshlayout:swiperefreshlayout:1.1.0")
 }
