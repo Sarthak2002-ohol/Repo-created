@@ -1,10 +1,14 @@
 package in.ahilyanagardjs.app;
 
 import android.app.Activity;
+import android.app.AlertDialog;
+import android.app.Dialog;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.Color;
+import android.graphics.drawable.ColorDrawable;
+import android.graphics.drawable.GradientDrawable;
 import android.net.ConnectivityManager;
 import android.net.NetworkInfo;
 import android.net.Uri;
@@ -15,6 +19,8 @@ import android.os.SystemClock;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.Window;
+import android.view.WindowManager;
 import android.webkit.CookieManager;
 import android.webkit.DownloadListener;
 import android.webkit.WebChromeClient;
@@ -33,8 +39,16 @@ import android.widget.Toast;
 
 public class MainActivity extends Activity {
     private static final String HOME_URL = "https://ahilyanagardjs.in/";
+    private static final String DOWNLOADS_URL = "https://ahilyanagardjs.in/newitems/1.html";
+    private static final String PREMIUM_URL = "https://superprofile.bio/ahilyanagardjs";
+    private static final String WHATSAPP_URL = "https://whatsapp.com/channel/0029Va9XieuJ93wa8LJJjb3O";
+    private static final String YOUTUBE_URL = "https://www.youtube.com/@ahilyanagardjs";
+    private static final String ABOUT_URL = "https://ahilyanagardjs.in/info/about";
     private static final String INTERNAL_HOST = "ahilyanagardjs.in";
     private static final long MIN_SPLASH_MS = 2000L;
+
+    private static final int NAV_HOME = 0;
+    private static final int NAV_DOWNLOADS = 1;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
 
@@ -42,11 +56,16 @@ public class MainActivity extends Activity {
     private ProgressBar progressBar;
     private ImageView splashView;
     private LinearLayout offlineView;
+    private LinearLayout bottomNavigation;
+    private LinearLayout[] navItems = new LinearLayout[5];
+    private TextView[] navIcons = new TextView[5];
+    private TextView[] navLabels = new TextView[5];
 
     private long splashStartedAt;
     private boolean initialPageFinished = false;
     private boolean splashDismissed = false;
     private boolean mainFrameError = false;
+    private int selectedNavIndex = NAV_HOME;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -57,29 +76,50 @@ public class MainActivity extends Activity {
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(Color.BLACK);
 
+        LinearLayout appShell = new LinearLayout(this);
+        appShell.setOrientation(LinearLayout.VERTICAL);
+        appShell.setBackgroundColor(Color.BLACK);
+
+        FrameLayout contentContainer = new FrameLayout(this);
+        LinearLayout.LayoutParams contentParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                0,
+                1f
+        );
+        appShell.addView(contentContainer, contentParams);
+
         webView = new WebView(this);
         webView.setBackgroundColor(Color.BLACK);
-
-        FrameLayout.LayoutParams webParams = new FrameLayout.LayoutParams(
+        contentContainer.addView(webView, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
-        );
-        root.addView(webView, webParams);
+        ));
 
         progressBar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
         progressBar.setMax(100);
         progressBar.setVisibility(View.GONE);
-
         FrameLayout.LayoutParams progressParams = new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 dpToPx(3)
         );
         progressParams.gravity = Gravity.TOP;
-        root.addView(progressBar, progressParams);
+        contentContainer.addView(progressBar, progressParams);
 
         offlineView = createOfflineView();
         offlineView.setVisibility(View.GONE);
-        root.addView(offlineView, new FrameLayout.LayoutParams(
+        contentContainer.addView(offlineView, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+        ));
+
+        bottomNavigation = createBottomNavigation();
+        bottomNavigation.setVisibility(View.GONE);
+        appShell.addView(bottomNavigation, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dpToPx(66)
+        ));
+
+        root.addView(appShell, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
         ));
@@ -96,9 +136,10 @@ public class MainActivity extends Activity {
 
         setContentView(root);
         configureWebView();
+        setNavSelection(NAV_HOME);
 
         if (savedInstanceState == null) {
-            loadHome();
+            loadUrlInternal(HOME_URL, NAV_HOME);
         } else {
             webView.restoreState(savedInstanceState);
             initialPageFinished = true;
@@ -188,16 +229,248 @@ public class MainActivity extends Activity {
         });
     }
 
-    private void loadHome() {
+    private LinearLayout createBottomNavigation() {
+        LinearLayout navigation = new LinearLayout(this);
+        navigation.setOrientation(LinearLayout.HORIZONTAL);
+        navigation.setGravity(Gravity.CENTER);
+        navigation.setPadding(dpToPx(3), dpToPx(2), dpToPx(3), dpToPx(3));
+        navigation.setBackground(createNavBackground());
+
+        addNavItem(navigation, 0, "⌂", getString(R.string.nav_home), v ->
+                loadUrlInternal(HOME_URL, NAV_HOME));
+
+        addNavItem(navigation, 1, "⇩", getString(R.string.nav_downloads), v ->
+                loadUrlInternal(DOWNLOADS_URL, NAV_DOWNLOADS));
+
+        addNavItem(navigation, 2, "★", getString(R.string.nav_premium), v ->
+                openExternal(Uri.parse(PREMIUM_URL)));
+
+        addNavItem(navigation, 3, "↻", getString(R.string.nav_refresh), v ->
+                refreshCurrentPage());
+
+        addNavItem(navigation, 4, "•••", getString(R.string.nav_more), v ->
+                showMoreMenu());
+
+        return navigation;
+    }
+
+    private void addNavItem(LinearLayout parent, int index, String iconText,
+                            String labelText, View.OnClickListener listener) {
+        LinearLayout item = new LinearLayout(this);
+        item.setOrientation(LinearLayout.VERTICAL);
+        item.setGravity(Gravity.CENTER);
+        item.setPadding(dpToPx(2), dpToPx(3), dpToPx(2), dpToPx(3));
+        item.setClickable(true);
+        item.setFocusable(true);
+        item.setOnClickListener(listener);
+
+        TextView icon = new TextView(this);
+        icon.setText(iconText);
+        icon.setTextSize(index == 4 ? 19f : 22f);
+        icon.setGravity(Gravity.CENTER);
+        icon.setTextColor(Color.WHITE);
+        item.addView(icon, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dpToPx(30)
+        ));
+
+        TextView label = new TextView(this);
+        label.setText(labelText);
+        label.setTextSize(10.5f);
+        label.setGravity(Gravity.CENTER);
+        label.setMaxLines(1);
+        label.setTextColor(0xFFD7D7D7);
+        item.addView(label, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        ));
+
+        parent.addView(item, new LinearLayout.LayoutParams(
+                0,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                1f
+        ));
+
+        navItems[index] = item;
+        navIcons[index] = icon;
+        navLabels[index] = label;
+    }
+
+    private GradientDrawable createNavBackground() {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setColor(0xFF090909);
+        drawable.setStroke(dpToPx(1), 0xFF262626);
+        return drawable;
+    }
+
+    private void setNavSelection(int index) {
+        selectedNavIndex = index;
+        for (int i = 0; i < navItems.length; i++) {
+            if (navIcons[i] == null || navLabels[i] == null) {
+                continue;
+            }
+            boolean active = i == index;
+            int color = active ? 0xFFF4A623 : 0xFFD7D7D7;
+            navIcons[i].setTextColor(color);
+            navLabels[i].setTextColor(color);
+            navLabels[i].setTypeface(navLabels[i].getTypeface(),
+                    active ? android.graphics.Typeface.BOLD : android.graphics.Typeface.NORMAL);
+        }
+    }
+
+    private void showMoreMenu() {
+        Dialog dialog = new Dialog(this);
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+
+        LinearLayout sheet = new LinearLayout(this);
+        sheet.setOrientation(LinearLayout.VERTICAL);
+        sheet.setPadding(dpToPx(20), dpToPx(14), dpToPx(20), dpToPx(22));
+
+        GradientDrawable sheetBackground = new GradientDrawable();
+        sheetBackground.setColor(0xFF111111);
+        float radius = dpToPx(24);
+        sheetBackground.setCornerRadii(new float[]{radius, radius, radius, radius, 0, 0, 0, 0});
+        sheet.setBackground(sheetBackground);
+
+        View handle = new View(this);
+        GradientDrawable handleBg = new GradientDrawable();
+        handleBg.setColor(0xFF555555);
+        handleBg.setCornerRadius(dpToPx(3));
+        handle.setBackground(handleBg);
+        LinearLayout.LayoutParams handleParams = new LinearLayout.LayoutParams(dpToPx(42), dpToPx(4));
+        handleParams.gravity = Gravity.CENTER_HORIZONTAL;
+        handleParams.bottomMargin = dpToPx(13);
+        sheet.addView(handle, handleParams);
+
+        TextView title = new TextView(this);
+        title.setText(R.string.more_title);
+        title.setTextColor(Color.WHITE);
+        title.setTextSize(20f);
+        title.setTypeface(title.getTypeface(), android.graphics.Typeface.BOLD);
+        title.setPadding(dpToPx(6), 0, 0, dpToPx(10));
+        sheet.addView(title);
+
+        sheet.addView(createMoreAction("◉", getString(R.string.more_whatsapp), v -> {
+            dialog.dismiss();
+            openExternal(Uri.parse(WHATSAPP_URL));
+        }));
+
+        sheet.addView(createMoreAction("▶", getString(R.string.more_youtube), v -> {
+            dialog.dismiss();
+            openExternal(Uri.parse(YOUTUBE_URL));
+        }));
+
+        sheet.addView(createMoreAction("ⓘ", getString(R.string.more_about), v -> {
+            dialog.dismiss();
+            loadUrlInternal(ABOUT_URL, selectedNavIndex);
+        }));
+
+        sheet.addView(createMoreAction("⏻", getString(R.string.more_exit), v -> {
+            dialog.dismiss();
+            showExitConfirmation();
+        }));
+
+        dialog.setContentView(sheet);
+        Window window = dialog.getWindow();
+        if (window != null) {
+            window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            window.setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.WRAP_CONTENT);
+            window.setGravity(Gravity.BOTTOM);
+            WindowManager.LayoutParams params = window.getAttributes();
+            params.width = WindowManager.LayoutParams.MATCH_PARENT;
+            params.dimAmount = 0.62f;
+            window.setAttributes(params);
+            window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+        }
+        dialog.setCanceledOnTouchOutside(true);
+        dialog.show();
+
+        if (window != null) {
+            window.setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.WRAP_CONTENT);
+            window.setGravity(Gravity.BOTTOM);
+        }
+    }
+
+    private LinearLayout createMoreAction(String iconText, String labelText, View.OnClickListener listener) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dpToPx(10), dpToPx(12), dpToPx(10), dpToPx(12));
+        row.setClickable(true);
+        row.setFocusable(true);
+        row.setOnClickListener(listener);
+
+        TextView icon = new TextView(this);
+        icon.setText(iconText);
+        icon.setTextSize(22f);
+        icon.setTextColor(0xFFF4A623);
+        icon.setGravity(Gravity.CENTER);
+        row.addView(icon, new LinearLayout.LayoutParams(dpToPx(46), dpToPx(42)));
+
+        TextView label = new TextView(this);
+        label.setText(labelText);
+        label.setTextColor(Color.WHITE);
+        label.setTextSize(16f);
+        label.setGravity(Gravity.CENTER_VERTICAL);
+        row.addView(label, new LinearLayout.LayoutParams(
+                0,
+                dpToPx(46),
+                1f
+        ));
+
+        TextView arrow = new TextView(this);
+        arrow.setText("›");
+        arrow.setTextSize(27f);
+        arrow.setTextColor(0xFF777777);
+        arrow.setGravity(Gravity.CENTER);
+        row.addView(arrow, new LinearLayout.LayoutParams(dpToPx(30), dpToPx(46)));
+
+        return row;
+    }
+
+    private void showExitConfirmation() {
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle(R.string.exit_title)
+                .setMessage(R.string.exit_message)
+                .setNegativeButton(R.string.cancel, null)
+                .setPositiveButton(R.string.exit, (d, which) -> finishAffinity())
+                .create();
+        dialog.setOnShowListener(d -> {
+            Button positive = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
+            Button negative = dialog.getButton(AlertDialog.BUTTON_NEGATIVE);
+            if (positive != null) positive.setTextColor(0xFFF4A623);
+            if (negative != null) negative.setTextColor(0xFFF4A623);
+        });
+        dialog.show();
+    }
+
+    private void loadUrlInternal(String url, int navIndex) {
         if (!isNetworkAvailable()) {
             mainFrameError = true;
             showOfflineWhenReady();
             return;
         }
 
+        setNavSelection(navIndex);
         offlineView.setVisibility(View.GONE);
         mainFrameError = false;
-        webView.loadUrl(HOME_URL);
+        webView.loadUrl(url);
+    }
+
+    private void refreshCurrentPage() {
+        if (!isNetworkAvailable()) {
+            Toast.makeText(this, R.string.offline_message, Toast.LENGTH_SHORT).show();
+            offlineView.setVisibility(View.VISIBLE);
+            return;
+        }
+
+        offlineView.setVisibility(View.GONE);
+        String currentUrl = webView.getUrl();
+        if (currentUrl == null || currentUrl.trim().isEmpty()) {
+            webView.loadUrl(HOME_URL);
+        } else {
+            webView.reload();
+        }
     }
 
     private void retryCurrentPage() {
@@ -234,6 +507,7 @@ public class MainActivity extends Activity {
                         splashView.setVisibility(View.GONE);
                         splashView.setAlpha(1f);
                         progressBar.setVisibility(View.GONE);
+                        bottomNavigation.setVisibility(View.VISIBLE);
                     })
                     .start();
         }, remaining);
@@ -248,6 +522,7 @@ public class MainActivity extends Activity {
             splashView.setVisibility(View.GONE);
             progressBar.setVisibility(View.GONE);
             offlineView.setVisibility(View.VISIBLE);
+            bottomNavigation.setVisibility(View.VISIBLE);
         }, remaining);
     }
 
@@ -324,7 +599,7 @@ public class MainActivity extends Activity {
             Intent intent = new Intent(Intent.ACTION_VIEW, uri);
             startActivity(intent);
         } catch (ActivityNotFoundException e) {
-            Toast.makeText(this, "No app found to open this link.", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, R.string.no_app_found, Toast.LENGTH_SHORT).show();
         }
     }
 

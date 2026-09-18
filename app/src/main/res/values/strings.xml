@@ -3,4 +3,22 @@
     <string name="offline_title">You’re offline</string>
     <string name="offline_message">Check your internet connection and try again.</string>
     <string name="retry">Retry</string>
+
+    <string name="nav_home">Home</string>
+    <string name="nav_downloads">Downloads</string>
+    <string name="nav_premium">Premium</string>
+    <string name="nav_refresh">Refresh</string>
+    <string name="nav_more">More</string>
+
+    <string name="more_title">More</string>
+    <string name="more_whatsapp">WhatsApp Channel</string>
+    <string name="more_youtube">YouTube</string>
+    <string name="more_about">About Us</string>
+    <string name="more_exit">Exit App</string>
+
+    <string name="exit_title">Exit AhilyanagarDJ\'s?</string>
+    <string name="exit_message">Are you sure you want to close the app?</string>
+    <string name="cancel">Cancel</string>
+    <string name="exit">Exit</string>
+    <string name="no_app_found">No app found to open this link.</string>
 </resources>
