@@ -2,8 +2,10 @@
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:drawable="@android:color/black" />
     <item>
-        <bitmap
-            android:gravity="center"
-            android:src="@drawable/ic_launcher_logo" />
+        <scale
+            android:drawable="@drawable/ic_launcher_logo"
+            android:scaleGravity="center"
+            android:scaleWidth="68%"
+            android:scaleHeight="68%" />
     </item>
 </layer-list>

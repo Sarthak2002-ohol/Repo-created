@@ -5,20 +5,29 @@
     <string name="retry">Retry</string>
 
     <string name="nav_home">Home</string>
-    <string name="nav_downloads">Downloads</string>
-    <string name="nav_premium">Premium</string>
+    <string name="nav_downloads">Latest Updates</string>
+    <string name="nav_premium">Premium Music</string>
     <string name="nav_refresh">Refresh</string>
     <string name="nav_more">More</string>
 
     <string name="more_title">More</string>
-    <string name="more_whatsapp">WhatsApp Channel</string>
+    <string name="more_whatsapp">WhatsApp</string>
+    <string name="more_whatsapp_desc">Get New DJ Mix Updates</string>
     <string name="more_youtube">YouTube</string>
+    <string name="more_youtube_desc">Watch Latest DJ Mixes &amp; Releases</string>
     <string name="more_about">About Us</string>
+    <string name="more_about_desc">Know More About AhilyanagarDJ\'s</string>
     <string name="more_exit">Exit App</string>
+    <string name="more_exit_desc">Close AhilyanagarDJ\'s App</string>
 
     <string name="exit_title">Exit AhilyanagarDJ\'s?</string>
     <string name="exit_message">Are you sure you want to close the app?</string>
     <string name="cancel">Cancel</string>
     <string name="exit">Exit</string>
     <string name="no_app_found">No app found to open this link.</string>
+
+    <string name="choose_save_location">Choose where to save this music file.</string>
+    <string name="download_starting">Downloading music…</string>
+    <string name="download_saved">Music saved successfully.</string>
+    <string name="download_failed">Couldn’t save this file. Please try again.</string>
 </resources>

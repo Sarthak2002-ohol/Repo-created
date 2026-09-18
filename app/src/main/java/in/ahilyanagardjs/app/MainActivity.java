@@ -29,6 +29,7 @@ import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.webkit.URLUtil;
 import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
@@ -36,6 +37,11 @@ import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
+
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
 
@@ -48,6 +54,7 @@ public class MainActivity extends Activity {
     private static final String ABOUT_URL = "https://ahilyanagardjs.in/info/about";
     private static final String INTERNAL_HOST = "ahilyanagardjs.in";
     private static final long MIN_SPLASH_MS = 2000L;
+    private static final int REQUEST_SAVE_FILE = 9001;
 
     private static final int NAV_HOME = 0;
     private static final int NAV_DOWNLOADS = 1;
@@ -69,6 +76,13 @@ public class MainActivity extends Activity {
     private boolean splashDismissed = false;
     private boolean mainFrameError = false;
     private int selectedNavIndex = NAV_HOME;
+
+    private String pendingDownloadUrl;
+    private String pendingDownloadUserAgent;
+    private String pendingDownloadMimeType;
+    private String pendingDownloadFileName;
+    private String pendingDownloadCookie;
+    private String pendingDownloadReferer;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -254,9 +268,146 @@ public class MainActivity extends Activity {
             @Override
             public void onDownloadStart(String url, String userAgent, String contentDisposition,
                                         String mimetype, long contentLength) {
-                openExternal(Uri.parse(url));
+                promptSaveDownload(url, userAgent, contentDisposition, mimetype);
             }
         });
+    }
+
+    private void promptSaveDownload(String url, String userAgent, String contentDisposition, String mimetype) {
+        if (!isNetworkAvailable()) {
+            Toast.makeText(this, R.string.offline_message, Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        Uri sourceUri = Uri.parse(url);
+        String scheme = sourceUri.getScheme() == null ? "" : sourceUri.getScheme().toLowerCase();
+        if (!"http".equals(scheme) && !"https".equals(scheme)) {
+            openExternal(sourceUri);
+            return;
+        }
+
+        String safeMimeType = (mimetype == null || mimetype.trim().isEmpty())
+                ? "application/octet-stream" : mimetype;
+        String fileName = URLUtil.guessFileName(url, contentDisposition, safeMimeType);
+
+        pendingDownloadUrl = url;
+        pendingDownloadUserAgent = userAgent;
+        pendingDownloadMimeType = safeMimeType;
+        pendingDownloadFileName = fileName;
+        pendingDownloadCookie = CookieManager.getInstance().getCookie(url);
+        pendingDownloadReferer = webView.getUrl();
+
+        Intent saveIntent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        saveIntent.addCategory(Intent.CATEGORY_OPENABLE);
+        saveIntent.setType(safeMimeType);
+        saveIntent.putExtra(Intent.EXTRA_TITLE, fileName);
+
+        try {
+            Toast.makeText(this, R.string.choose_save_location, Toast.LENGTH_SHORT).show();
+            startActivityForResult(saveIntent, REQUEST_SAVE_FILE);
+        } catch (ActivityNotFoundException e) {
+            clearPendingDownload();
+            openExternal(sourceUri);
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        if (requestCode == REQUEST_SAVE_FILE) {
+            if (resultCode == RESULT_OK && data != null && data.getData() != null) {
+                downloadToSelectedFile(data.getData());
+            } else {
+                clearPendingDownload();
+            }
+            return;
+        }
+        super.onActivityResult(requestCode, resultCode, data);
+    }
+
+    private void downloadToSelectedFile(Uri destinationUri) {
+        final String downloadUrl = pendingDownloadUrl;
+        final String userAgent = pendingDownloadUserAgent;
+        final String cookie = pendingDownloadCookie;
+        final String referer = pendingDownloadReferer;
+
+        if (downloadUrl == null || downloadUrl.trim().isEmpty()) {
+            clearPendingDownload();
+            Toast.makeText(this, R.string.download_failed, Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        Toast.makeText(this, R.string.download_starting, Toast.LENGTH_SHORT).show();
+
+        new Thread(() -> {
+            HttpURLConnection connection = null;
+            try {
+                URL remoteUrl = new URL(downloadUrl);
+                connection = (HttpURLConnection) remoteUrl.openConnection();
+                connection.setInstanceFollowRedirects(true);
+                connection.setConnectTimeout(20000);
+                connection.setReadTimeout(60000);
+
+                if (userAgent != null && !userAgent.trim().isEmpty()) {
+                    connection.setRequestProperty("User-Agent", userAgent);
+                }
+                if (cookie != null && !cookie.trim().isEmpty()) {
+                    connection.setRequestProperty("Cookie", cookie);
+                }
+                if (referer != null && !referer.trim().isEmpty()) {
+                    connection.setRequestProperty("Referer", referer);
+                }
+
+                connection.connect();
+                int responseCode = connection.getResponseCode();
+                if (responseCode < 200 || responseCode >= 400) {
+                    throw new Exception("HTTP " + responseCode);
+                }
+
+                try (InputStream input = connection.getInputStream();
+                     OutputStream output = getContentResolver().openOutputStream(destinationUri, "w")) {
+                    if (output == null) {
+                        throw new Exception("Unable to open destination file");
+                    }
+
+                    byte[] buffer = new byte[16 * 1024];
+                    int read;
+                    while ((read = input.read(buffer)) != -1) {
+                        output.write(buffer, 0, read);
+                    }
+                    output.flush();
+                }
+
+                runOnUiThread(() -> Toast.makeText(
+                        MainActivity.this,
+                        R.string.download_saved,
+                        Toast.LENGTH_LONG
+                ).show());
+            } catch (Exception e) {
+                try {
+                    getContentResolver().delete(destinationUri, null, null);
+                } catch (Exception ignored) {
+                }
+                runOnUiThread(() -> Toast.makeText(
+                        MainActivity.this,
+                        R.string.download_failed,
+                        Toast.LENGTH_LONG
+                ).show());
+            } finally {
+                if (connection != null) {
+                    connection.disconnect();
+                }
+                runOnUiThread(this::clearPendingDownload);
+            }
+        }).start();
+    }
+
+    private void clearPendingDownload() {
+        pendingDownloadUrl = null;
+        pendingDownloadUserAgent = null;
+        pendingDownloadMimeType = null;
+        pendingDownloadFileName = null;
+        pendingDownloadCookie = null;
+        pendingDownloadReferer = null;
     }
 
     private LinearLayout createBottomNavigation() {
@@ -306,9 +457,9 @@ public class MainActivity extends Activity {
 
         TextView label = new TextView(this);
         label.setText(labelText);
-        label.setTextSize(10.5f);
+        label.setTextSize(9.2f);
         label.setGravity(Gravity.CENTER);
-        label.setMaxLines(1);
+        label.setMaxLines(2);
         label.setTextColor(0xFFD7D7D7);
         item.addView(label, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -380,25 +531,41 @@ public class MainActivity extends Activity {
         title.setPadding(dpToPx(6), 0, 0, dpToPx(10));
         sheet.addView(title);
 
-        sheet.addView(createMoreAction("◉", getString(R.string.more_whatsapp), v -> {
-            dialog.dismiss();
-            openExternal(Uri.parse(WHATSAPP_URL));
-        }));
+        sheet.addView(createMoreAction(
+                R.drawable.ic_more_whatsapp,
+                getString(R.string.more_whatsapp),
+                getString(R.string.more_whatsapp_desc),
+                v -> {
+                    dialog.dismiss();
+                    openExternal(Uri.parse(WHATSAPP_URL));
+                }));
 
-        sheet.addView(createMoreAction("▶", getString(R.string.more_youtube), v -> {
-            dialog.dismiss();
-            openExternal(Uri.parse(YOUTUBE_URL));
-        }));
+        sheet.addView(createMoreAction(
+                R.drawable.ic_more_youtube,
+                getString(R.string.more_youtube),
+                getString(R.string.more_youtube_desc),
+                v -> {
+                    dialog.dismiss();
+                    openExternal(Uri.parse(YOUTUBE_URL));
+                }));
 
-        sheet.addView(createMoreAction("ⓘ", getString(R.string.more_about), v -> {
-            dialog.dismiss();
-            loadUrlInternal(ABOUT_URL, selectedNavIndex);
-        }));
+        sheet.addView(createMoreAction(
+                R.drawable.ic_more_about,
+                getString(R.string.more_about),
+                getString(R.string.more_about_desc),
+                v -> {
+                    dialog.dismiss();
+                    loadUrlInternal(ABOUT_URL, selectedNavIndex);
+                }));
 
-        sheet.addView(createMoreAction("⏻", getString(R.string.more_exit), v -> {
-            dialog.dismiss();
-            showExitConfirmation();
-        }));
+        sheet.addView(createMoreAction(
+                R.drawable.ic_more_exit,
+                getString(R.string.more_exit),
+                getString(R.string.more_exit_desc),
+                v -> {
+                    dialog.dismiss();
+                    showExitConfirmation();
+                }));
 
         dialog.setContentView(sheet);
         Window window = dialog.getWindow();
@@ -421,30 +588,53 @@ public class MainActivity extends Activity {
         }
     }
 
-    private LinearLayout createMoreAction(String iconText, String labelText, View.OnClickListener listener) {
+    private LinearLayout createMoreAction(int iconRes, String labelText, String descriptionText,
+                                              View.OnClickListener listener) {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(dpToPx(10), dpToPx(12), dpToPx(10), dpToPx(12));
+        row.setPadding(dpToPx(10), dpToPx(9), dpToPx(10), dpToPx(9));
         row.setClickable(true);
         row.setFocusable(true);
         row.setOnClickListener(listener);
 
-        TextView icon = new TextView(this);
-        icon.setText(iconText);
-        icon.setTextSize(22f);
-        icon.setTextColor(0xFFF4A623);
-        icon.setGravity(Gravity.CENTER);
-        row.addView(icon, new LinearLayout.LayoutParams(dpToPx(46), dpToPx(42)));
+        ImageView icon = new ImageView(this);
+        icon.setImageResource(iconRes);
+        icon.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dpToPx(42), dpToPx(42));
+        iconParams.rightMargin = dpToPx(12);
+        row.addView(icon, iconParams);
+
+        LinearLayout textBlock = new LinearLayout(this);
+        textBlock.setOrientation(LinearLayout.VERTICAL);
+        textBlock.setGravity(Gravity.CENTER_VERTICAL);
 
         TextView label = new TextView(this);
         label.setText(labelText);
         label.setTextColor(Color.WHITE);
         label.setTextSize(16f);
-        label.setGravity(Gravity.CENTER_VERTICAL);
-        row.addView(label, new LinearLayout.LayoutParams(
+        label.setTypeface(label.getTypeface(), android.graphics.Typeface.BOLD);
+        label.setMaxLines(1);
+        textBlock.addView(label, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        ));
+
+        TextView description = new TextView(this);
+        description.setText(descriptionText);
+        description.setTextColor(0xFFA8A8A8);
+        description.setTextSize(12.5f);
+        description.setMaxLines(2);
+        LinearLayout.LayoutParams descriptionParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        );
+        descriptionParams.topMargin = dpToPx(2);
+        textBlock.addView(description, descriptionParams);
+
+        row.addView(textBlock, new LinearLayout.LayoutParams(
                 0,
-                dpToPx(46),
+                ViewGroup.LayoutParams.WRAP_CONTENT,
                 1f
         ));
 
@@ -453,7 +643,7 @@ public class MainActivity extends Activity {
         arrow.setTextSize(27f);
         arrow.setTextColor(0xFF777777);
         arrow.setGravity(Gravity.CENTER);
-        row.addView(arrow, new LinearLayout.LayoutParams(dpToPx(30), dpToPx(46)));
+        row.addView(arrow, new LinearLayout.LayoutParams(dpToPx(30), dpToPx(54)));
 
         return row;
     }
