@@ -59,9 +59,14 @@ public class MainActivity extends Activity {
             "https://whatsapp.com/channel/0029Va9XieuJ93wa8LJJjb3O";
     private static final String YOUTUBE_URL =
             "https://www.youtube.com/@ahilyanagardjs";
-    private static final String ABOUT_URL =
-            "https://ahilyanagardjs.in/info/about";
+    private static final String INSTAGRAM_URL =
+            "https://www.instagram.com/ahilyanagardjs/";
+    private static final String INSTAGRAM_CHANNEL_URL =
+            "https://www.instagram.com/channel/AFcfZ6Q9foWXAcnS/";
+    private static final String ABOUT_ASSET_URL =
+            "file:///android_asset/about_us.html";
     private static final String INTERNAL_HOST = "ahilyanagardjs.in";
+    private static final String PREMIUM_HOST = "superprofile.bio";
 
     private static final long MIN_SPLASH_MS = 2000L;
     private static final int REQUEST_SAVE_FILE = 9001;
@@ -71,6 +76,7 @@ public class MainActivity extends Activity {
 
     private static final int NAV_HOME = 0;
     private static final int NAV_UPDATES = 1;
+    private static final int NAV_PREMIUM = 2;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
 
@@ -1049,8 +1055,9 @@ public class MainActivity extends Activity {
                 2,
                 "★",
                 getString(R.string.nav_premium),
-                v -> openExternal(
-                        Uri.parse(PREMIUM_URL)));
+                v -> loadUrlInternal(
+                        PREMIUM_URL,
+                        NAV_PREMIUM));
 
         addNavItem(
                 navigation,
@@ -1285,6 +1292,34 @@ public class MainActivity extends Activity {
 
         sheet.addView(
                 createMoreAction(
+                        R.drawable.ic_more_instagram,
+                        getString(
+                                R.string.more_instagram),
+                        getString(
+                                R.string.more_instagram_desc),
+                        v -> {
+                            dialog.dismiss();
+                            openExternal(
+                                    Uri.parse(
+                                            INSTAGRAM_URL));
+                        }));
+
+        sheet.addView(
+                createMoreAction(
+                        R.drawable.ic_more_instagram_channel,
+                        getString(
+                                R.string.more_instagram_channel),
+                        getString(
+                                R.string.more_instagram_channel_desc),
+                        v -> {
+                            dialog.dismiss();
+                            openExternal(
+                                    Uri.parse(
+                                            INSTAGRAM_CHANNEL_URL));
+                        }));
+
+        sheet.addView(
+                createMoreAction(
                         R.drawable.ic_more_about,
                         getString(
                                 R.string.more_about),
@@ -1292,9 +1327,7 @@ public class MainActivity extends Activity {
                                 R.string.more_about_desc),
                         v -> {
                             dialog.dismiss();
-                            loadUrlInternal(
-                                    ABOUT_URL,
-                                    selectedNavIndex);
+                            loadAboutPage();
                         }));
 
         sheet.addView(
@@ -1498,6 +1531,20 @@ public class MainActivity extends Activity {
         });
 
         dialog.show();
+    }
+
+    private void loadAboutPage() {
+        offlineView.setVisibility(View.GONE);
+        mainFrameError = false;
+
+        webView.setEnabled(true);
+        webView.setClickable(true);
+        webView.setFocusable(true);
+        webView.setFocusableInTouchMode(true);
+        webView.requestFocus(View.FOCUS_DOWN);
+
+        progressBar.setVisibility(View.VISIBLE);
+        webView.loadUrl(ABOUT_ASSET_URL);
     }
 
     private void loadUrlInternal(
@@ -1770,21 +1817,103 @@ public class MainActivity extends Activity {
                         : uri.getHost()
                                 .toLowerCase(Locale.US);
 
-        if (("http".equals(scheme) ||
-                "https".equals(scheme)) &&
+        boolean httpUrl =
+                "http".equals(scheme) ||
+                "https".equals(scheme);
+
+        if (httpUrl &&
                 (host.equals(INTERNAL_HOST) ||
                         host.endsWith(
                                 "." + INTERNAL_HOST))) {
+            return false;
+        }
+
+        if (httpUrl &&
+                (host.equals(PREMIUM_HOST) ||
+                        host.endsWith(
+                                "." + PREMIUM_HOST))) {
+
+            // Browse Superprofile inside the app, but send checkout/payment
+            // steps to the browser for better bank/UPI/OTP compatibility.
+            if (isLikelyPaymentUrl(uri)) {
+                openExternal(uri);
+                return true;
+            }
 
             return false;
         }
 
+        // Payment providers, Instagram/YouTube/WhatsApp and custom schemes
+        // (UPI, intent, etc.) stay outside the WebView.
         openExternal(uri);
         return true;
     }
 
+    private boolean isLikelyPaymentUrl(Uri uri) {
+        String path =
+                uri.getPath() == null
+                        ? ""
+                        : uri.getPath()
+                                .toLowerCase(Locale.US);
+
+        String query =
+                uri.getQuery() == null
+                        ? ""
+                        : uri.getQuery()
+                                .toLowerCase(Locale.US);
+
+        String combined = path + "?" + query;
+
+        return combined.contains("checkout") ||
+                combined.contains("payment") ||
+                combined.contains("/pay/") ||
+                combined.endsWith("/pay") ||
+                combined.contains("billing") ||
+                combined.contains("purchase") ||
+                combined.contains("transaction") ||
+                combined.contains("order_id=") ||
+                combined.contains("razorpay") ||
+                combined.contains("cashfree") ||
+                combined.contains("payu") ||
+                combined.contains("phonepe") ||
+                combined.contains("paytm") ||
+                combined.contains("stripe");
+    }
+
     private void openExternal(Uri uri) {
         try {
+            String scheme =
+                    uri.getScheme() == null
+                            ? ""
+                            : uri.getScheme()
+                                    .toLowerCase(Locale.US);
+
+            if ("intent".equals(scheme)) {
+                Intent intent =
+                        Intent.parseUri(
+                                uri.toString(),
+                                Intent.URI_INTENT_SCHEME);
+
+                if (intent.resolveActivity(
+                        getPackageManager()) != null) {
+                    startActivity(intent);
+                    return;
+                }
+
+                String fallbackUrl =
+                        intent.getStringExtra(
+                                "browser_fallback_url");
+
+                if (fallbackUrl != null &&
+                        !fallbackUrl.trim().isEmpty()) {
+                    startActivity(
+                            new Intent(
+                                    Intent.ACTION_VIEW,
+                                    Uri.parse(fallbackUrl)));
+                    return;
+                }
+            }
+
             Intent intent =
                     new Intent(
                             Intent.ACTION_VIEW,
@@ -1792,7 +1921,7 @@ public class MainActivity extends Activity {
 
             startActivity(intent);
 
-        } catch (ActivityNotFoundException e) {
+        } catch (Exception e) {
             Toast.makeText(
                     this,
                     R.string.no_app_found,
