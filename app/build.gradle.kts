@@ -1,3 +1,2 @@
-plugins {
-    id("com.android.application") version "8.7.3" apply false
-}
+versionCode = 10
+versionName = "1.8"
