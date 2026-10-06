@@ -219,11 +219,14 @@ public class MainActivity extends Activity {
     @SuppressWarnings("deprecation")
     private void applySystemBarInsets(View view) {
         view.setOnApplyWindowInsetsListener((v, insets) -> {
+            // Keep the status-bar safe area, but do not add a second bottom inset.
+            // The web page already owns its fixed bottom navigation, so extra native
+            // bottom padding creates a visible black gap above Android's system bar.
             v.setPadding(
                     0,
                     insets.getSystemWindowInsetTop(),
                     0,
-                    insets.getSystemWindowInsetBottom()
+                    0
             );
             return insets;
         });
@@ -1532,10 +1535,10 @@ public class MainActivity extends Activity {
                         .setMessage(
                                 R.string.exit_message)
                         .setNegativeButton(
-                                R.string.cancel,
+                                "No",
                                 null)
                         .setPositiveButton(
-                                R.string.exit,
+                                "Yes",
                                 (d, which) ->
                                         finishAffinity())
                         .create();
@@ -2284,17 +2287,19 @@ public class MainActivity extends Activity {
             offlineView.setVisibility(View.GONE);
 
             if (webView.getUrl() == null) {
-                finish();
+                showExitConfirmation();
             }
 
             return;
         }
 
+        // Preserve normal in-app back navigation. Once the user reaches the first
+        // page in the WebView history, ask before closing the Android app.
         if (webView != null &&
                 webView.canGoBack()) {
             webView.goBack();
         } else {
-            super.onBackPressed();
+            showExitConfirmation();
         }
     }
 
