@@ -5,6 +5,7 @@ import android.app.AlertDialog;
 import android.app.Dialog;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
@@ -12,6 +13,7 @@ import android.graphics.drawable.GradientDrawable;
 import android.net.ConnectivityManager;
 import android.net.NetworkInfo;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -41,14 +43,19 @@ import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.io.BufferedReader;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.net.URLDecoder;
 import java.util.Locale;
+import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
+import org.json.JSONObject;
 
 public class MainActivity extends Activity {
 
@@ -67,6 +74,22 @@ public class MainActivity extends Activity {
             "file:///android_asset/about_us.html";
     private static final String INTERNAL_HOST = "ahilyanagardjs.in";
     private static final String PREMIUM_HOST = "superprofile.bio";
+
+    // Native website-distribution analytics + update service.
+    // No private API key is embedded in the APK; the server validates and rate-limits events.
+    private static final String APP_ANALYTICS_URL =
+            "https://ahilyanagardjs.in/music-app/app-analytics-api.php";
+    private static final String APP_VERSION_URL =
+            "https://ahilyanagardjs.in/music-app/app-version.php";
+    private static final String APP_DISTRIBUTION = "website";
+    private static final String METRICS_PREFS = "adj_app_metrics_v1";
+    private static final String PREF_INSTALL_ID = "install_id";
+    private static final String PREF_FIRST_OPEN_SENT = "first_open_sent";
+    private static final String PREF_LAST_VERSION_CODE = "last_version_code";
+    private static final String PREF_LAST_SESSION_AT = "last_session_at";
+    private static final String PREF_LAST_UPDATE_CHECK_AT = "last_update_check_at";
+    private static final long SESSION_REPORT_INTERVAL_MS = 30L * 60L * 1000L;
+    private static final long UPDATE_CHECK_INTERVAL_MS = 6L * 60L * 60L * 1000L;
 
     private static final long MIN_SPLASH_MS = 2000L;
     private static final int REQUEST_SAVE_FILE = 9001;
@@ -95,6 +118,12 @@ public class MainActivity extends Activity {
     private boolean splashDismissed;
     private boolean mainFrameError;
     private int selectedNavIndex = NAV_HOME;
+
+    private SharedPreferences appMetricsPrefs;
+    private String appInstallId;
+    private boolean sessionEventInFlight;
+    private boolean updateCheckInFlight;
+    private int lastUpdateDialogVersionCode = -1;
 
     private float webTouchDownX;
     private float webTouchDownY;
@@ -178,6 +207,7 @@ public class MainActivity extends Activity {
 
         configureWebView();
         setNavSelection(NAV_HOME);
+        initializeAppTracking();
 
         if (savedInstanceState == null) {
             loadUrlInternal(HOME_URL, NAV_HOME);
@@ -1929,6 +1959,294 @@ public class MainActivity extends Activity {
         }
     }
 
+
+    /**
+     * Creates an anonymous installation identifier and reports first-open/update events.
+     * The identifier is app-local random data, not an IMEI, advertising ID, phone number,
+     * email address, or other hardware identifier. Uninstalling the app removes it.
+     */
+    private void initializeAppTracking() {
+        appMetricsPrefs = getSharedPreferences(METRICS_PREFS, MODE_PRIVATE);
+        appInstallId = appMetricsPrefs.getString(PREF_INSTALL_ID, "");
+
+        if (appInstallId == null || appInstallId.trim().isEmpty()) {
+            appInstallId = UUID.randomUUID().toString();
+            appMetricsPrefs.edit()
+                    .putString(PREF_INSTALL_ID, appInstallId)
+                    .apply();
+        }
+
+        final int currentVersionCode = getAppVersionCode();
+        final boolean firstOpenSent =
+                appMetricsPrefs.getBoolean(PREF_FIRST_OPEN_SENT, false);
+        final int lastVersionCode =
+                appMetricsPrefs.getInt(PREF_LAST_VERSION_CODE, 0);
+
+        if (!firstOpenSent) {
+            sendAnalyticsEventAsync("first_open", () ->
+                    appMetricsPrefs.edit()
+                            .putBoolean(PREF_FIRST_OPEN_SENT, true)
+                            .putInt(PREF_LAST_VERSION_CODE, currentVersionCode)
+                            .apply());
+        } else if (lastVersionCode != currentVersionCode) {
+            sendAnalyticsEventAsync("app_update", () ->
+                    appMetricsPrefs.edit()
+                            .putInt(PREF_LAST_VERSION_CODE, currentVersionCode)
+                            .apply());
+        }
+
+        // Delay the visual update prompt until the app has had time to display its content.
+        handler.postDelayed(this::checkForAppUpdateIfDue, 2500L);
+    }
+
+    private void reportSessionIfNeeded() {
+        if (appMetricsPrefs == null || sessionEventInFlight || !isNetworkAvailable()) {
+            return;
+        }
+
+        long now = System.currentTimeMillis();
+        long last = appMetricsPrefs.getLong(PREF_LAST_SESSION_AT, 0L);
+        if (last > 0L && now - last < SESSION_REPORT_INTERVAL_MS) {
+            return;
+        }
+
+        sessionEventInFlight = true;
+        sendAnalyticsEventAsync("session_start", () -> {
+            sessionEventInFlight = false;
+            appMetricsPrefs.edit()
+                    .putLong(PREF_LAST_SESSION_AT, System.currentTimeMillis())
+                    .apply();
+        }, () -> sessionEventInFlight = false);
+    }
+
+    private void sendAnalyticsEventAsync(String event, Runnable onSuccess) {
+        sendAnalyticsEventAsync(event, onSuccess, null);
+    }
+
+    private void sendAnalyticsEventAsync(
+            String event,
+            Runnable onSuccess,
+            Runnable onFailure) {
+
+        if (!isNetworkAvailable() || appInstallId == null || appInstallId.isEmpty()) {
+            if (onFailure != null) onFailure.run();
+            return;
+        }
+
+        new Thread(() -> {
+            boolean success = false;
+            HttpURLConnection connection = null;
+
+            try {
+                URL url = new URL(APP_ANALYTICS_URL);
+                connection = (HttpURLConnection) url.openConnection();
+                connection.setRequestMethod("POST");
+                connection.setConnectTimeout(8000);
+                connection.setReadTimeout(8000);
+                connection.setDoOutput(true);
+                connection.setUseCaches(false);
+                connection.setRequestProperty(
+                        "Content-Type",
+                        "application/json; charset=UTF-8");
+                connection.setRequestProperty(
+                        "Accept",
+                        "application/json");
+                connection.setRequestProperty(
+                        "User-Agent",
+                        "AhilyanagarDJs-Android/" + getAppVersionName());
+
+                String cookies = CookieManager.getInstance()
+                        .getCookie("https://ahilyanagardjs.in/");
+                if (cookies != null && !cookies.trim().isEmpty()) {
+                    connection.setRequestProperty("Cookie", cookies);
+                }
+
+                JSONObject payload = new JSONObject();
+                payload.put("install_id", appInstallId);
+                payload.put("event", event);
+                payload.put("version_code", getAppVersionCode());
+                payload.put("version_name", getAppVersionName());
+                payload.put("android_sdk", Build.VERSION.SDK_INT);
+                payload.put("distribution", APP_DISTRIBUTION);
+
+                byte[] body = payload.toString().getBytes("UTF-8");
+                connection.setFixedLengthStreamingMode(body.length);
+
+                try (OutputStream output = connection.getOutputStream()) {
+                    output.write(body);
+                    output.flush();
+                }
+
+                int code = connection.getResponseCode();
+                success = code >= 200 && code < 300;
+
+                // Consume the response so the HTTP connection can be reused/closed cleanly.
+                InputStream stream = success
+                        ? connection.getInputStream()
+                        : connection.getErrorStream();
+                if (stream != null) {
+                    try (InputStream ignored = stream) {
+                        byte[] buffer = new byte[512];
+                        while (ignored.read(buffer) != -1) {
+                            // No response body is required by the native tracker.
+                        }
+                    }
+                }
+            } catch (Exception ignored) {
+                success = false;
+            } finally {
+                if (connection != null) connection.disconnect();
+            }
+
+            final boolean finalSuccess = success;
+            handler.post(() -> {
+                if (finalSuccess) {
+                    if (onSuccess != null) onSuccess.run();
+                } else if (onFailure != null) {
+                    onFailure.run();
+                }
+            });
+        }, "adj-app-analytics").start();
+    }
+
+    private void checkForAppUpdateIfDue() {
+        if (appMetricsPrefs == null || updateCheckInFlight || !isNetworkAvailable()) {
+            return;
+        }
+
+        long now = System.currentTimeMillis();
+        long last = appMetricsPrefs.getLong(PREF_LAST_UPDATE_CHECK_AT, 0L);
+        if (last > 0L && now - last < UPDATE_CHECK_INTERVAL_MS) {
+            return;
+        }
+
+        updateCheckInFlight = true;
+
+        new Thread(() -> {
+            JSONObject info = null;
+            HttpURLConnection connection = null;
+
+            try {
+                URL url = new URL(APP_VERSION_URL);
+                connection = (HttpURLConnection) url.openConnection();
+                connection.setRequestMethod("GET");
+                connection.setConnectTimeout(8000);
+                connection.setReadTimeout(8000);
+                connection.setUseCaches(false);
+                connection.setRequestProperty("Accept", "application/json");
+                connection.setRequestProperty(
+                        "User-Agent",
+                        "AhilyanagarDJs-Android/" + getAppVersionName());
+
+                int code = connection.getResponseCode();
+                if (code >= 200 && code < 300) {
+                    try (BufferedReader reader = new BufferedReader(
+                            new InputStreamReader(connection.getInputStream(), "UTF-8"))) {
+                        StringBuilder json = new StringBuilder();
+                        String line;
+                        while ((line = reader.readLine()) != null) {
+                            json.append(line);
+                        }
+                        info = new JSONObject(json.toString());
+                    }
+                }
+            } catch (Exception ignored) {
+                info = null;
+            } finally {
+                if (connection != null) connection.disconnect();
+            }
+
+            final JSONObject finalInfo = info;
+            handler.post(() -> {
+                updateCheckInFlight = false;
+
+                if (finalInfo == null) {
+                    return;
+                }
+
+                appMetricsPrefs.edit()
+                        .putLong(PREF_LAST_UPDATE_CHECK_AT, System.currentTimeMillis())
+                        .apply();
+
+                int latestVersionCode = finalInfo.optInt("latest_version_code", 0);
+                if (latestVersionCode <= getAppVersionCode() ||
+                        latestVersionCode == lastUpdateDialogVersionCode) {
+                    return;
+                }
+
+                String downloadUrl = finalInfo.optString("download_url", "").trim();
+                if (downloadUrl.isEmpty()) {
+                    return;
+                }
+
+                showAppUpdateDialog(finalInfo);
+            });
+        }, "adj-update-check").start();
+    }
+
+    private void showAppUpdateDialog(JSONObject info) {
+        int latestVersionCode = info.optInt("latest_version_code", 0);
+        int minSupportedVersionCode = info.optInt("min_supported_version_code", 0);
+        String latestVersionName = info.optString("latest_version_name", "").trim();
+        String downloadUrl = info.optString("download_url", "").trim();
+        String releaseNotes = info.optString("release_notes", "").trim();
+
+        if (latestVersionCode <= getAppVersionCode() || downloadUrl.isEmpty()) {
+            return;
+        }
+
+        lastUpdateDialogVersionCode = latestVersionCode;
+        boolean required =
+                minSupportedVersionCode > 0 &&
+                getAppVersionCode() < minSupportedVersionCode;
+
+        String versionLabel = latestVersionName.isEmpty()
+                ? "a newer version"
+                : "version " + latestVersionName;
+
+        StringBuilder message = new StringBuilder();
+        message.append(required
+                ? "An important update is required to continue using the latest app features."
+                : "A new AhilyanagarDJ's app update is available.");
+        message.append("\n\nAvailable: ").append(versionLabel);
+        message.append("\nInstalled: ").append(getAppVersionName());
+        if (!releaseNotes.isEmpty()) {
+            message.append("\n\n").append(releaseNotes);
+        }
+
+        AlertDialog.Builder builder = new AlertDialog.Builder(this)
+                .setTitle(required ? "Update Required" : "Update Available")
+                .setMessage(message.toString())
+                .setPositiveButton("Update App", (dialog, which) ->
+                        openExternal(Uri.parse(downloadUrl)));
+
+        if (required) {
+            builder.setNegativeButton("Exit", (dialog, which) -> finishAffinity());
+            builder.setCancelable(false);
+        } else {
+            builder.setNegativeButton("Later", null);
+        }
+
+        AlertDialog dialog = builder.create();
+        dialog.setOnShowListener(d -> {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+                    .setTextColor(0xFFF4A623);
+            dialog.getButton(AlertDialog.BUTTON_NEGATIVE)
+                    .setTextColor(0xFFD7D7D7);
+        });
+        dialog.show();
+    }
+
+    private int getAppVersionCode() {
+        return BuildConfig.VERSION_CODE;
+    }
+
+    private String getAppVersionName() {
+        return BuildConfig.VERSION_NAME == null
+                ? ""
+                : BuildConfig.VERSION_NAME;
+    }
+
     private boolean isNetworkAvailable() {
         ConnectivityManager manager =
                 (ConnectivityManager)
@@ -1952,6 +2270,15 @@ public class MainActivity extends Activity {
                         getResources()
                                 .getDisplayMetrics()
                                 .density);
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        reportSessionIfNeeded();
+        if (splashDismissed) {
+            checkForAppUpdateIfDue();
+        }
     }
 
     @Override
