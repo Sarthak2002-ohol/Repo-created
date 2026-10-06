@@ -1,0 +1,12 @@
+AhilyanagarDJ's Android v1.8
+
+Changes in this build:
+- App now opens directly at https://ahilyanagardjs.in/music-app/
+- Native bottom app buttons/navigation removed completely.
+- Website content uses the full app screen.
+- Existing splash screen, downloads, About Us, social links, WebView behavior, analytics and update checker are preserved.
+- Analytics/update version remains v1.8 (versionCode 10).
+- BuildConfig generation enabled for analytics version reporting.
+
+GitHub upload:
+Upload the CONTENTS of this folder to the repository root so that app/, .github/, build.gradle.kts, settings.gradle.kts and gradle.properties remain at root level.
