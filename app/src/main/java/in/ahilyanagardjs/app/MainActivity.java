@@ -59,7 +59,7 @@ import org.json.JSONObject;
 
 public class MainActivity extends Activity {
 
-    private static final String HOME_URL = "https://ahilyanagardjs.in/";
+    private static final String HOME_URL = "https://ahilyanagardjs.in/music-app/";
     private static final String DOWNLOADS_URL = "https://ahilyanagardjs.in/newitems/1.html";
     private static final String PREMIUM_URL = "https://superprofile.bio/ahilyanagardjs";
     private static final String WHATSAPP_URL =
@@ -184,10 +184,8 @@ public class MainActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));
 
-        bottomNavigation = createBottomNavigation();
-        bottomNavigation.setVisibility(View.GONE);
-        appShell.addView(bottomNavigation, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dpToPx(66)));
+        // Native bottom navigation intentionally removed.
+        // The Music App website provides its own navigation.
 
         root.addView(appShell, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -1705,8 +1703,6 @@ public class MainActivity extends Activity {
                         progressBar.setVisibility(
                                 View.GONE);
 
-                        bottomNavigation.setVisibility(
-                                View.VISIBLE);
                     })
                     .start();
 
@@ -1729,7 +1725,6 @@ public class MainActivity extends Activity {
             splashView.setVisibility(View.GONE);
             progressBar.setVisibility(View.GONE);
             offlineView.setVisibility(View.VISIBLE);
-            bottomNavigation.setVisibility(View.VISIBLE);
 
         }, remaining);
     }
