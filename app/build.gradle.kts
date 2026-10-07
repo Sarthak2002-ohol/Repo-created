@@ -2,6 +2,9 @@ plugins {
     id("com.android.application")
 }
 
+val releaseKeystorePath = System.getenv("ANDROID_KEYSTORE_PATH")
+val releaseSigningPassword = System.getenv("ANDROID_SIGNING_PASSWORD")
+
 android {
     namespace = "in.ahilyanagardjs.app"
     compileSdk = 35
@@ -18,9 +21,24 @@ android {
         buildConfig = true
     }
 
+    signingConfigs {
+        if (!releaseKeystorePath.isNullOrBlank() &&
+            !releaseSigningPassword.isNullOrBlank()) {
+            create("release") {
+                storeFile = file(releaseKeystorePath)
+                storePassword = releaseSigningPassword
+                keyAlias = "ahilyanagardjs_release"
+                keyPassword = releaseSigningPassword
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfigs.findByName("release")?.let {
+                signingConfig = it
+            }
         }
     }
 }
