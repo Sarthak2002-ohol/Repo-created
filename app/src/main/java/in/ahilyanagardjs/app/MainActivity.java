@@ -162,7 +162,7 @@ public class MainActivity extends Activity {
         webView.setFocusableInTouchMode(true);
         webView.setOverScrollMode(View.OVER_SCROLL_NEVER);
 
-        installWebViewTouchRouting();
+        // Custom pull-to-refresh disabled to prevent accidental reloads while scrolling.
 
         contentContainer.addView(webView, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -173,10 +173,8 @@ public class MainActivity extends Activity {
         progressBar.setMax(100);
         progressBar.setVisibility(View.GONE);
 
-        FrameLayout.LayoutParams progressParams = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dpToPx(3));
-        progressParams.gravity = Gravity.TOP;
-        contentContainer.addView(progressBar, progressParams);
+        // Keep the internal progress object for compatibility, but do not attach it
+        // to the UI. This removes the yellow loading line at the top of the app.
 
         offlineView = createOfflineView();
         offlineView.setVisibility(View.GONE);
