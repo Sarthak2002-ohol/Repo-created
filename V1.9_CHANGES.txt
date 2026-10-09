@@ -1,0 +1,17 @@
+AhilyanagarDJ's Android App v1.9
+Version code: 11
+
+Changes
+- Added Android WebView file chooser support for website upload fields.
+- Profile Photo / Choose File can now open Android Files/Photos from inside the APK.
+- Supports single and multiple file selection when requested by the webpage.
+- Restores WebView focus after returning from the picker.
+- Preserves v1.8 signed release setup, update analytics, downloads, exit behavior, no pull-to-refresh, and no top loading line.
+
+Build
+- Signed: GitHub Actions -> Build Signed Release APK
+- Artifact: AhilyanagarDJs-v1.9-SIGNED
+- APK: AhilyanagarDJs-v1.9-release.apk
+
+Important
+Use the same existing release signing secrets/key as v1.8 so Android installs v1.9 as an update. Do not put the keystore or passwords in this ZIP/repository.

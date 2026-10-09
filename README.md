@@ -1,37 +1,39 @@
-# AhilyanagarDJ's Android App
+# AhilyanagarDJ's Android App v1.9
 
-Android WebView wrapper for: https://ahilyanagardjs.in/
+Android WebView wrapper for `https://ahilyanagardjs.in/music-app/`.
 
 ## App details
-- App name: AhilyanagarDJ's
 - Package: `in.ahilyanagardjs.app`
-- Version: 1.0
+- Version: 1.9
+- Version code: 11
 - Minimum Android: Android 6.0 (API 23)
 - Target SDK: Android 15 / API 35
 
-## Included behavior
-- Loads the AhilyanagarDJ's website inside the app.
-- JavaScript, DOM storage, cookies, images and media playback are enabled.
-- `ahilyanagardjs.in` links stay inside the app.
-- WhatsApp, Instagram, Superprofile, mail, phone and other external links open with Android's matching app/browser.
-- Android Back button navigates website history before exiting.
-- A thin loading progress bar is shown while pages load.
-- Download links are handed to the device browser/download handler.
+## v1.9 upload fix
+- Supports HTML file inputs inside the Android WebView.
+- Tapping Profile Photo / Choose File can open Android Files/Photos.
+- Uses Android's system picker; no broad storage permission is requested.
+- The chosen file is returned to the webpage and normal website validation/upload continues.
 
-## Build locally
-Requires Android SDK 35 and Gradle 8.9.
+## Preserved behavior
+- Main page remains `https://ahilyanagardjs.in/music-app/`.
+- JavaScript, DOM storage, cookies, images and media playback remain enabled.
+- Internal AhilyanagarDJ's links stay inside the app according to the existing routing rules.
+- External services continue to open through Android as configured.
+- Existing download/save picker behavior remains unchanged.
+- Existing analytics/update checks remain unchanged.
+- Existing Back/Exit behavior remains unchanged.
+- Custom pull-to-refresh remains disabled.
+- The old top loading line remains hidden.
 
-```bash
-gradle assembleDebug
-```
+## Build signed release
+This project includes `.github/workflows/build-signed-release.yml`. Keep the existing GitHub secrets from the v1.8 signed build:
+- `ANDROID_KEYSTORE_B64`
+- `ANDROID_SIGNING_PASSWORD`
 
-APK output:
-`app/build/outputs/apk/debug/app-debug.apk`
+Run **Build Signed Release APK** from GitHub Actions.
 
-## Build with GitHub Actions
-1. Create a GitHub repository and upload this project.
-2. Open the repository's **Actions** tab.
-3. Run **Build Android APK**.
-4. Download the `AhilyanagarDJs-APK` artifact from the completed run.
+Expected artifact: `AhilyanagarDJs-v1.9-SIGNED`
+Expected APK: `AhilyanagarDJs-v1.9-release.apk`
 
-The included workflow also builds automatically when pushed to the `main` branch.
+Use the same release key as v1.8. No signing key or password is included in this source package.

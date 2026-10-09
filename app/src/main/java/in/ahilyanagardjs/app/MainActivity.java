@@ -34,6 +34,7 @@ import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
+import android.webkit.ValueCallback;
 import android.webkit.WebViewClient;
 import android.widget.Button;
 import android.widget.FrameLayout;
@@ -93,6 +94,7 @@ public class MainActivity extends Activity {
 
     private static final long MIN_SPLASH_MS = 2000L;
     private static final int REQUEST_SAVE_FILE = 9001;
+    private static final int REQUEST_FILE_CHOOSER = 9002;
 
     private static final Pattern CONTENT_DISPOSITION_FILENAME =
             Pattern.compile("(?i)filename\\*?\\s*=\\s*(?:UTF-8''|\"?)([^\";]+)");
@@ -118,6 +120,8 @@ public class MainActivity extends Activity {
     private boolean splashDismissed;
     private boolean mainFrameError;
     private int selectedNavIndex = NAV_HOME;
+
+    private ValueCallback<Uri[]> pendingFileChooserCallback;
 
     private SharedPreferences appMetricsPrefs;
     private String appInstallId;
@@ -296,6 +300,49 @@ public class MainActivity extends Activity {
                 if (splashDismissed) {
                     progressBar.setVisibility(
                             newProgress >= 100 ? View.GONE : View.VISIBLE);
+                }
+            }
+
+            @Override
+            public boolean onShowFileChooser(
+                    WebView webView,
+                    ValueCallback<Uri[]> filePathCallback,
+                    FileChooserParams fileChooserParams) {
+
+                // Cancel any chooser callback that is still waiting from an older request.
+                if (pendingFileChooserCallback != null) {
+                    pendingFileChooserCallback.onReceiveValue(null);
+                }
+                pendingFileChooserCallback = filePathCallback;
+
+                Intent chooserIntent;
+                try {
+                    chooserIntent = fileChooserParams.createIntent();
+                    chooserIntent.addCategory(Intent.CATEGORY_OPENABLE);
+
+                    if (fileChooserParams.getMode() == FileChooserParams.MODE_OPEN_MULTIPLE) {
+                        chooserIntent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+                    }
+                } catch (Exception ignored) {
+                    chooserIntent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+                    chooserIntent.addCategory(Intent.CATEGORY_OPENABLE);
+                    chooserIntent.setType("*/*");
+                }
+
+                try {
+                    startActivityForResult(chooserIntent, REQUEST_FILE_CHOOSER);
+                    return true;
+                } catch (ActivityNotFoundException e) {
+                    if (pendingFileChooserCallback != null) {
+                        pendingFileChooserCallback.onReceiveValue(null);
+                        pendingFileChooserCallback = null;
+                    }
+
+                    Toast.makeText(
+                            MainActivity.this,
+                            "No file picker is available on this device.",
+                            Toast.LENGTH_SHORT).show();
+                    return false;
                 }
             }
         });
@@ -815,6 +862,32 @@ public class MainActivity extends Activity {
             int requestCode,
             int resultCode,
             Intent data) {
+
+        if (requestCode == REQUEST_FILE_CHOOSER) {
+            Uri[] selectedFiles = null;
+
+            if (resultCode == RESULT_OK) {
+                selectedFiles = WebChromeClient.FileChooserParams.parseResult(
+                        resultCode,
+                        data);
+            }
+
+            if (pendingFileChooserCallback != null) {
+                pendingFileChooserCallback.onReceiveValue(selectedFiles);
+                pendingFileChooserCallback = null;
+            }
+
+            // Restore normal WebView focus after the Android picker closes.
+            handler.postDelayed(() -> {
+                if (webView != null) {
+                    webView.setEnabled(true);
+                    webView.setClickable(true);
+                    webView.requestFocus(View.FOCUS_DOWN);
+                }
+            }, 100L);
+
+            return;
+        }
 
         if (requestCode == REQUEST_SAVE_FILE) {
             if (resultCode == RESULT_OK &&
