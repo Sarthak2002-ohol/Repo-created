@@ -36,6 +36,15 @@ jobs:
         with:
           gradle-version: '8.9'
 
+      - name: Use Firebase config (optional secret override)
+        shell: bash
+        env:
+          FIREBASE_CONFIG_B64: ${{ secrets.FIREBASE_GOOGLE_SERVICES_JSON_B64 }}
+        run: |
+          if [ -n "$FIREBASE_CONFIG_B64" ]; then
+            echo "$FIREBASE_CONFIG_B64" | base64 --decode > app/google-services.json
+          fi
+
       - name: Build APK
         run: gradle assembleDebug
 
