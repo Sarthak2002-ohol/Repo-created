@@ -11,7 +11,7 @@ android {
 
     defaultConfig {
         applicationId = "in.ahilyanagardjs.app"
-        minSdk = 23
+        minSdk = 24
         targetSdk = 35
         versionCode = 12
         versionName = "1.10"
