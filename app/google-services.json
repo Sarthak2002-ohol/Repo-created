@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "934453571723",
+    "project_id": "ahilyanagardjs-a54ee",
+    "storage_bucket": "ahilyanagardjs-a54ee.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:934453571723:android:24e6a9632dc2f6e8e2648e",
+        "android_client_info": {
+          "package_name": "in.ahilyanagardjs.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAOdIzDU4S3udpEqk-1bFW1EXWTbqad2mE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

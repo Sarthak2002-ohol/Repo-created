@@ -2,6 +2,14 @@ package in.ahilyanagardjs.app;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.Manifest;
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.IntentFilter;
+import android.content.pm.PackageManager;
+import android.webkit.JavascriptInterface;
+import com.google.firebase.FirebaseApp;
+import com.google.firebase.messaging.FirebaseMessaging;
 import android.app.Dialog;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
@@ -60,6 +68,10 @@ import org.json.JSONObject;
 
 public class MainActivity extends Activity {
 
+    private static final int NOTIFICATION_PERMISSION_REQUEST = 11010;
+    private BroadcastReceiver mediaControlReceiver;
+    private String nativeMediaJavascript;
+    private final String mediaBridgeToken = UUID.randomUUID().toString();
     private static final String HOME_URL = "https://ahilyanagardjs.in/music-app/";
     private static final String DOWNLOADS_URL = "https://ahilyanagardjs.in/newitems/1.html";
     private static final String PREMIUM_URL = "https://superprofile.bio/ahilyanagardjs";
@@ -206,15 +218,127 @@ public class MainActivity extends Activity {
         setContentView(root);
 
         configureWebView();
+        setupNativeMediaBridge();
+        setupFirebaseNotifications();
         setNavSelection(NAV_HOME);
         initializeAppTracking();
 
         if (savedInstanceState == null) {
-            loadUrlInternal(HOME_URL, NAV_HOME);
+            String incoming = getSafeNotificationUrl(getIntent());
+            loadUrlInternal(incoming == null ? HOME_URL : incoming, NAV_HOME);
         } else {
             webView.restoreState(savedInstanceState);
             initialPageFinished = true;
             hideSplashWhenReady();
+        }
+    }
+
+    private boolean isTrustedMusicUrl(String url) {
+        if (url == null) return false;
+        try {
+            Uri parsed = Uri.parse(url);
+            return "https".equalsIgnoreCase(parsed.getScheme())
+                    && INTERNAL_HOST.equalsIgnoreCase(parsed.getHost())
+                    && parsed.getPath() != null
+                    && (parsed.getPath().equals("/music-app")
+                        || parsed.getPath().startsWith("/music-app/"));
+        } catch (Exception ignored) { return false; }
+    }
+
+    private String getSafeNotificationUrl(Intent intent) {
+        if (intent == null) return null;
+        String url = intent.getStringExtra("target_url");
+        if (url == null && intent.getData() != null) url = intent.getData().toString();
+        return isTrustedMusicUrl(url) ? url : null;
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        String url = getSafeNotificationUrl(intent);
+        if (url != null && webView != null) webView.loadUrl(url);
+    }
+
+    private void setupNativeMediaBridge() {
+        webView.addJavascriptInterface(new Object() {
+            @JavascriptInterface
+            public void update(String token, String json) {
+                if (!mediaBridgeToken.equals(token)) return;
+                handler.post(() -> receiveNativeMediaUpdate(json));
+            }
+        }, "AndroidNativeMedia");
+        try (InputStream input = getAssets().open("adc-native-media.js")) {
+            byte[] bytes = new byte[input.available()];
+            int pos = 0, count;
+            while (pos < bytes.length && (count = input.read(bytes, pos, bytes.length - pos)) > 0) pos += count;
+            nativeMediaJavascript = new String(bytes, 0, pos, java.nio.charset.StandardCharsets.UTF_8)
+                    .replace("__ADC_NATIVE_MEDIA_TOKEN__", mediaBridgeToken);
+        } catch (Exception ignored) { nativeMediaJavascript = null; }
+        mediaControlReceiver = new BroadcastReceiver() {
+            @Override public void onReceive(Context context, Intent intent) {
+                if (intent == null || !AdcMediaService.ACTION_MEDIA_COMMAND.equals(intent.getAction())) return;
+                String command = intent.getStringExtra("command");
+                if (command == null || !command.matches("play|pause|next|previous|stop")) return;
+                if (webView != null && isTrustedMusicUrl(webView.getUrl())) {
+                    webView.evaluateJavascript("if(window.ADCNativeMediaControl)window.ADCNativeMediaControl("
+                        + JSONObject.quote(command) + ");", null);
+                }
+            }
+        };
+        IntentFilter filter = new IntentFilter(AdcMediaService.ACTION_MEDIA_COMMAND);
+        if (Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(mediaControlReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+        } else {
+            registerReceiver(mediaControlReceiver, filter);
+        }
+    }
+
+    private void installNativeMediaJavascript(String url) {
+        if (isTrustedMusicUrl(url) && nativeMediaJavascript != null && webView != null) {
+            webView.evaluateJavascript(nativeMediaJavascript, null);
+        }
+    }
+
+    private void receiveNativeMediaUpdate(String json) {
+        if (webView == null || !isTrustedMusicUrl(webView.getUrl()) || json == null || json.length() > 3500) return;
+        try {
+            JSONObject value = new JSONObject(json);
+            if (!value.optBoolean("hasTrack", false)) {
+                Intent close = new Intent(this, AdcMediaService.class);
+                close.setAction(AdcMediaService.ACTION_STOP);
+                startService(close);
+                return;
+            }
+            String title = value.optString("title", "");
+            if (title.isEmpty()) return;
+            Intent update = new Intent(this, AdcMediaService.class);
+            update.setAction(AdcMediaService.ACTION_UPDATE);
+            update.putExtra("title", title.substring(0, Math.min(120, title.length())));
+            String artist = value.optString("artist", "AhilyanagarDJ's");
+            update.putExtra("artist", artist.substring(0, Math.min(120, artist.length())));
+            update.putExtra("cover", value.optString("cover", ""));
+            update.putExtra("playing", value.optBoolean("playing", false));
+            update.putExtra("position", Math.max(0, value.optLong("position", 0)));
+            update.putExtra("duration", Math.max(0, value.optLong("duration", 0)));
+            // Android 8+ requires the first service start to be a foreground start.
+            if (AdcMediaService.isRunning || Build.VERSION.SDK_INT < 26) startService(update);
+            else startForegroundService(update);
+        } catch (Exception ignored) { }
+    }
+
+    private void setupFirebaseNotifications() {
+        AdcFirebaseService.createChannel(this);
+        // Firebase only initializes with the real google-services.json, not a placeholder.
+        if (!FirebaseApp.getApps(this).isEmpty()) {
+            FirebaseMessaging.getInstance().subscribeToTopic("all_users");
+            if (Build.VERSION.SDK_INT >= 33
+                    && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                       != PackageManager.PERMISSION_GRANTED) {
+                handler.postDelayed(() -> requestPermissions(
+                    new String[]{Manifest.permission.POST_NOTIFICATIONS},
+                    NOTIFICATION_PERMISSION_REQUEST), 2200);
+            }
         }
     }
 
@@ -375,6 +499,8 @@ public class MainActivity extends Activity {
                 view.setClickable(true);
                 view.requestFocus(View.FOCUS_DOWN);
 
+                // Audio controls stay connected to the EXISTING website player.
+                installNativeMediaJavascript(url);
                 // One-time rewrite only. No MutationObserver is left running.
 
                 if (!initialPageFinished && !mainFrameError) {
@@ -2387,7 +2513,13 @@ public class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         handler.removeCallbacksAndMessages(null);
+        if (mediaControlReceiver != null) {
+            try { unregisterReceiver(mediaControlReceiver); } catch (Exception ignored) {}
+            mediaControlReceiver = null;
+        }
 
+        // Website audio cannot survive destruction of its owning WebView.
+        try { stopService(new Intent(this, AdcMediaService.class)); } catch (Exception ignored) {}
         if (webView != null) {
             webView.setOnTouchListener(null);
             webView.stopLoading();

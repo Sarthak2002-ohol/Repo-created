@@ -13,8 +13,8 @@ android {
         applicationId = "in.ahilyanagardjs.app"
         minSdk = 23
         targetSdk = 35
-        versionCode = 11
-        versionName = "1.9"
+        versionCode = 12
+        versionName = "1.10"
     }
 
     buildFeatures {
@@ -43,5 +43,13 @@ android {
     }
 }
 
+// Firebase config is supplied by the user, never replaced with a fake one.
+// A debug build without the file can run the media controls, but cannot receive pushes.
+if (file("google-services.json").exists()) {
+    apply(plugin = "com.google.gms.google-services")
+}
+
 dependencies {
+    implementation(platform("com.google.firebase:firebase-bom:35.0.2"))
+    implementation("com.google.firebase:firebase-messaging")
 }
