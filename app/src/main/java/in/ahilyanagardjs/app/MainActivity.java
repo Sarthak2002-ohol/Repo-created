@@ -3,10 +3,6 @@ package in.ahilyanagardjs.app;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.Manifest;
-import android.content.ClipData;
-import android.content.ClipDescription;
-import android.content.ClipboardManager;
-import android.os.PersistableBundle;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.IntentFilter;
@@ -73,8 +69,6 @@ import org.json.JSONObject;
 public class MainActivity extends Activity {
 
     private static final int NOTIFICATION_PERMISSION_REQUEST = 11010;
-    // Temporary test helper; do not ship in a public app release.
-    private boolean fcmTestPromptShown = false;
     private BroadcastReceiver mediaControlReceiver;
     private String nativeMediaJavascript;
     private final String mediaBridgeToken = UUID.randomUUID().toString();
@@ -331,53 +325,6 @@ public class MainActivity extends Activity {
             if (AdcMediaService.isRunning || Build.VERSION.SDK_INT < 26) startService(update);
             else startForegroundService(update);
         } catch (Exception ignored) { }
-    }
-
-    /** Test-only Android dialog. Does not change the Music App web UI or media playback. */
-    private void showFcmTestTokenPrompt() {
-        if (fcmTestPromptShown || isFinishing() || isDestroyed()) return;
-        fcmTestPromptShown = true;
-        new AlertDialog.Builder(this)
-                .setTitle("Private Firebase notification test")
-                .setMessage("Tap Copy FCM token, then paste it into Firebase Console "
-                        + "> Send test message > Test on device. "
-                        + "Do not post your token publicly.\n\n"
-                        + "This temporary helper appears when the test app starts. "
-                        + "It does not send a notification.")
-                .setNegativeButton("Later", null)
-                .setPositiveButton("Copy FCM token", (dialog, which) -> copyFcmTestToken())
-                .show();
-    }
-
-    private void copyFcmTestToken() {
-        if (FirebaseApp.getApps(this).isEmpty()) {
-            Toast.makeText(this, "Firebase is not configured in this APK.", Toast.LENGTH_LONG).show();
-            return;
-        }
-        Toast.makeText(this, "Retrieving this phone's Firebase token...", Toast.LENGTH_SHORT).show();
-        FirebaseMessaging.getInstance().getToken().addOnCompleteListener(task -> {
-            if (isFinishing() || isDestroyed()) return;
-            if (!task.isSuccessful() || task.getResult() == null || task.getResult().isEmpty()) {
-                Toast.makeText(this, "Couldn't get token. Check internet, then reopen the app and try again.",
-                        Toast.LENGTH_LONG).show();
-                return;
-            }
-            ClipboardManager clipboard = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
-            if (clipboard == null) {
-                Toast.makeText(this, "Clipboard is unavailable on this phone.", Toast.LENGTH_LONG).show();
-                return;
-            }
-            // Token stays in Android's clipboard; it is never sent to the website or logs.
-            ClipData clip = ClipData.newPlainText("AhilyanagarDJs private FCM token", task.getResult());
-            if (Build.VERSION.SDK_INT >= 33) {
-                PersistableBundle extras = new PersistableBundle();
-                extras.putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true);
-                clip.getDescription().setExtras(extras);
-            }
-            clipboard.setPrimaryClip(clip);
-            Toast.makeText(this, "Token copied! Paste it into Firebase > Test on device.",
-                    Toast.LENGTH_LONG).show();
-        });
     }
 
     private void setupFirebaseNotifications() {
@@ -1956,8 +1903,6 @@ public class MainActivity extends Activity {
                         progressBar.setVisibility(
                                 View.GONE);
 
-                        // Internal test helper: native dialog, never embedded in WebView.
-                        handler.postDelayed(this::showFcmTestTokenPrompt, 450L);
                     })
                     .start();
 
