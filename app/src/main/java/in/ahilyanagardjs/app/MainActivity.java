@@ -4,6 +4,8 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.Manifest;
 import android.content.BroadcastReceiver;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.IntentFilter;
 import android.content.pm.PackageManager;
@@ -340,6 +342,64 @@ public class MainActivity extends Activity {
                     NOTIFICATION_PERMISSION_REQUEST), 2200);
             }
         }
+    }
+
+    /**
+     * An on-demand support diagnostic; never logs or transmits the FCM token.
+     * Long-press More > About Us to invoke it without changing the normal UI.
+     */
+    private void showFirebaseDeviceTokenDiagnostic() {
+        if (FirebaseApp.getApps(this).isEmpty()) {
+            new AlertDialog.Builder(this)
+                    .setTitle("Firebase notifications unavailable")
+                    .setMessage("Firebase is not initialized in this APK. Verify the release Firebase configuration before sending a private test.")
+                    .setPositiveButton("Close", null)
+                    .show();
+            return;
+        }
+
+        Toast.makeText(this, "Retrieving this device's current notification token…", Toast.LENGTH_SHORT).show();
+        FirebaseMessaging.getInstance().getToken().addOnCompleteListener(task -> {
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed()) return;
+
+                if (!task.isSuccessful() || task.getResult() == null
+                        || task.getResult().trim().isEmpty()) {
+                    new AlertDialog.Builder(this)
+                            .setTitle("Notification token unavailable")
+                            .setMessage("The current token could not be retrieved. Check internet access and Google Play services, then try again. This APK must use the same Firebase project as the admin notification sender.")
+                            .setPositiveButton("Close", null)
+                            .show();
+                    return;
+                }
+
+                final String token = task.getResult();
+                final String suffix = token.substring(Math.max(0, token.length() - 6));
+                final boolean allowed = Build.VERSION.SDK_INT < 33
+                        || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                           == PackageManager.PERMISSION_GRANTED;
+                new AlertDialog.Builder(this)
+                        .setTitle("Firebase device test")
+                        .setMessage("Current device token ending: …" + suffix
+                                + "\nNotification permission: " + (allowed ? "Allowed" : "Not allowed")
+                                + "\n\nCopy this token only for a private test in the AhilyanagarDJ's admin panel. Do not post it publicly. The token can change after reinstalling or updating the app.")
+                        .setPositiveButton("Copy current FCM token", (dialog, which) -> {
+                            ClipboardManager clipboard =
+                                    (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+                            if (clipboard != null) {
+                                clipboard.setPrimaryClip(
+                                        ClipData.newPlainText("FCM device token", token));
+                                Toast.makeText(this,
+                                        "Current token copied. Paste into Admin > Push notifications > Private test.",
+                                        Toast.LENGTH_LONG).show();
+                            } else {
+                                Toast.makeText(this, "Clipboard unavailable", Toast.LENGTH_SHORT).show();
+                            }
+                        })
+                        .setNegativeButton("Close", null)
+                        .show();
+            });
+        });
     }
 
     @SuppressWarnings("deprecation")
@@ -1546,17 +1606,20 @@ public class MainActivity extends Activity {
                                             INSTAGRAM_CHANNEL_URL));
                         }));
 
-        sheet.addView(
-                createMoreAction(
-                        R.drawable.ic_more_about,
-                        getString(
-                                R.string.more_about),
-                        getString(
-                                R.string.more_about_desc),
-                        v -> {
-                            dialog.dismiss();
-                            loadAboutPage();
-                        }));
+        LinearLayout aboutAction = createMoreAction(
+                R.drawable.ic_more_about,
+                getString(R.string.more_about),
+                getString(R.string.more_about_desc),
+                v -> {
+                    dialog.dismiss();
+                    loadAboutPage();
+                });
+        aboutAction.setOnLongClickListener(v -> {
+            dialog.dismiss();
+            showFirebaseDeviceTokenDiagnostic();
+            return true;
+        });
+        sheet.addView(aboutAction);
 
         sheet.addView(
                 createMoreAction(
