@@ -12,6 +12,8 @@ import android.content.pm.PackageManager;
 import android.webkit.JavascriptInterface;
 import com.google.firebase.FirebaseApp;
 import com.google.firebase.messaging.FirebaseMessaging;
+import com.google.android.libraries.ads.mobile.sdk.MobileAds;
+import com.google.android.libraries.ads.mobile.sdk.initialization.InitializationConfig;
 import android.app.Dialog;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
@@ -220,6 +222,7 @@ public class MainActivity extends Activity {
         setContentView(root);
 
         configureWebView();
+        setupWebViewAdsIntegration();
         setupNativeMediaBridge();
         setupFirebaseNotifications();
         setNavSelection(NAV_HOME);
@@ -451,6 +454,25 @@ public class MainActivity extends Activity {
             // Never consume taps or gestures. WebView always receives them.
             return false;
         });
+    }
+
+    /**
+     * Connect the existing Music App WebView to Google's supported WebView API
+     * for Ads. This does not request native ads or change page navigation.
+     */
+    private void setupWebViewAdsIntegration() {
+        // Initialization performs work off the UI thread, as Google recommends.
+        new Thread(() -> MobileAds.initialize(
+                getApplicationContext(),
+                new InitializationConfig.Builder(
+                        InitializationConfig.WEBVIEW_APIS_FOR_ADS_APPLICATION_ID).build(),
+                initializationStatus -> {
+                    // No native ads are loaded. AdSense remains controlled by PHP.
+                }
+        ), "adc-webview-ads-init").start();
+
+        // Register on the main thread, before the first music-app URL loads.
+        MobileAds.registerWebView(webView);
     }
 
     private void configureWebView() {

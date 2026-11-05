@@ -13,8 +13,8 @@ android {
         applicationId = "in.ahilyanagardjs.app"
         minSdk = 24
         targetSdk = 35
-        versionCode = 15
-        versionName = "1.12"
+        versionCode = 16
+        versionName = "1.13"
     }
 
     buildFeatures {
@@ -50,6 +50,9 @@ if (file("google-services.json").exists()) {
 }
 
 dependencies {
+    // WebView API for Ads: links the existing AdSense web pages with Google's
+    // supported Android WebView integration; no native ad unit is created.
+    implementation("com.google.android.libraries.ads.mobile.sdk:ads-mobile-sdk:1.5.0")
     implementation(platform("com.google.firebase:firebase-bom:35.0.2"))
     implementation("com.google.firebase:firebase-messaging")
 }
